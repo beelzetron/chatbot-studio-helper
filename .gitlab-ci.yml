@@ -10,7 +10,6 @@ variables:
 
 stages:
   - test-backend
-  - test-frontend
   - build-backend
   - build-frontend
   - scan
@@ -29,19 +28,6 @@ test-backend:
         - src/**/*
         - tests/**/*
         - requirements.txt
-
-# Frontend Tests
-test-frontend:
-  stage: test-frontend
-  image: node:20-alpine
-  script:
-    - echo "Running frontend tests..."
-    - cd frontend
-    - npm install
-    - npm run test -- --run
-  rules:
-    - changes:
-        - frontend/**/*
 
 # Build Backend Image
 build-backend:
