@@ -36,7 +36,7 @@ describe('App', () => {
 
   it('has an input field for messages', () => {
     render(<App />);
-    const input = screen.getByPlaceholderText('Chiedi spiegazioni o esempi...');
+    const input = screen.getByPlaceholderText('Chiedi spiegazioni o allega una foto...');
     expect(input).toBeInTheDocument();
   });
 
@@ -48,7 +48,7 @@ describe('App', () => {
 
   it('updates message input when typing', async () => {
     render(<App />);
-    const input = screen.getByPlaceholderText('Chiedi spiegazioni o esempi...');
+    const input = screen.getByPlaceholderText('Chiedi spiegazioni o allega una foto...');
     
     await fireEvent.change(input, { target: { value: 'Test message' } });
     
@@ -63,7 +63,7 @@ describe('App', () => {
 
     render(<App />);
     
-    const input = screen.getByPlaceholderText('Chiedi spiegazioni o esempi...');
+    const input = screen.getByPlaceholderText('Chiedi spiegazioni o allega una foto...');
     await fireEvent.change(input, { target: { value: 'Test question' } });
     
     const sendButton = screen.getByRole('button', { name: /invia/i });
@@ -82,7 +82,7 @@ describe('App', () => {
 
     render(<App />);
     
-    const input = screen.getByPlaceholderText('Chiedi spiegazioni o esempi...');
+    const input = screen.getByPlaceholderText('Chiedi spiegazioni o allega una foto...');
     await fireEvent.change(input, { target: { value: 'Test question' } });
     
     const sendButton = screen.getByRole('button', { name: /invia/i });
@@ -98,7 +98,7 @@ describe('App', () => {
 
     render(<App />);
     
-    const input = screen.getByPlaceholderText('Chiedi spiegazioni o esempi...');
+    const input = screen.getByPlaceholderText('Chiedi spiegazioni o allega una foto...');
     await fireEvent.change(input, { target: { value: 'Test question' } });
     
     const sendButton = screen.getByRole('button', { name: /invia/i });
@@ -107,5 +107,55 @@ describe('App', () => {
     await waitFor(() => {
       expect(screen.getByText(/problema di connessione/i)).toBeInTheDocument();
     });
+  });
+
+  it('shows attach and camera buttons', () => {
+    render(<App />);
+    expect(screen.getByLabelText('Allega immagine')).toBeInTheDocument();
+    expect(screen.getByLabelText('Scatta foto')).toBeInTheDocument();
+  });
+
+  it('enables send with image attachment only', async () => {
+    mockedChatApi.sendMessage.mockResolvedValue({
+      response: 'Help with your homework photo',
+      is_helpful: true,
+    });
+
+    render(<App />);
+
+    const sendButton = screen.getByRole('button', { name: /invia/i });
+    expect(sendButton).toBeDisabled();
+
+    const fileInput = document.querySelector('input[type="file"]:not([capture])') as HTMLInputElement;
+    const file = new File(['photo'], 'homework.jpg', { type: 'image/jpeg' });
+    await fireEvent.change(fileInput, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(sendButton).not.toBeDisabled();
+    });
+
+    await fireEvent.click(sendButton);
+
+    await waitFor(() => {
+      expect(mockedChatApi.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: '',
+          images: expect.arrayContaining([expect.any(File)]),
+        })
+      );
+    });
+  });
+
+  it('removes attachment preview and disables send again', async () => {
+    render(<App />);
+
+    const fileInput = document.querySelector('input[type="file"]:not([capture])') as HTMLInputElement;
+    const file = new File(['photo'], 'homework.jpg', { type: 'image/jpeg' });
+    await fireEvent.change(fileInput, { target: { files: [file] } });
+
+    const removeButton = await screen.findByLabelText('Rimuovi homework.jpg');
+    await fireEvent.click(removeButton);
+
+    expect(screen.getByRole('button', { name: /invia/i })).toBeDisabled();
   });
 });

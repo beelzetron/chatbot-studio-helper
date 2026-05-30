@@ -1,4 +1,4 @@
-image: python:3.12-slim
+image: registry.access.redhat.com/ubi9/python-312:latest
 
 variables:
   GITLAB_REGISTRY: "registry.gitlab.labbase.it"
@@ -26,7 +26,7 @@ test-backend:
 # Frontend Tests
 test-frontend:
   stage: test
-  image: node:20-alpine
+  image: registry.access.redhat.com/ubi9/nodejs-20:latest
   script:
     - cd frontend
     - npm ci
@@ -43,7 +43,7 @@ build-backend:
     - docker:24.0-dind
   script:
     - |
-      echo "Building backend Docker image..."
+      echo "Building backend Docker image (UBI9)..."
       docker build -t $GITLAB_REGISTRY/$BACKEND_PROJECT:latest .
       docker tag $GITLAB_REGISTRY/$BACKEND_PROJECT:latest $GITLAB_REGISTRY/$BACKEND_PROJECT:$CI_COMMIT_SHORT_SHA
     - |
@@ -63,7 +63,7 @@ build-frontend:
     - docker:24.0-dind
   script:
     - |
-      echo "Building frontend Docker image..."
+      echo "Building frontend Docker image (UBI9)..."
       docker build -t $GITLAB_REGISTRY/$FRONTEND_PROJECT:latest ./frontend
       docker tag $GITLAB_REGISTRY/$FRONTEND_PROJECT:latest $GITLAB_REGISTRY/$FRONTEND_PROJECT:$CI_COMMIT_SHORT_SHA
     - |

@@ -4,12 +4,14 @@ Non fornisce soluzioni, ma esempi e spiegazioni per aiutare nello studio.
 Guardrail implementati per prevenire utilizzi impropri.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from typing import Optional
 import httpx
 import re
 import os
+
+from src.attachments import ProcessedImage, validate_and_process_images
 
 app = FastAPI(
     title="Study Helper Chatbot",
@@ -20,6 +22,9 @@ app = FastAPI(
 # Configuration
 LLM_ENDPOINT = os.getenv("LLM_ENDPOINT", "http://192.168.11.36:8000/v1")
 LLM_MODEL = os.getenv("LLM_MODEL", "local-model")
+LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "60"))
+
+DEFAULT_IMAGE_MESSAGE = "Aiutami a capire questo esercizio dall'immagine"
 
 # Safety guardrails
 SCHOOL_SUBJECTS = [
@@ -102,10 +107,13 @@ PROMPT_INJECTION_PATTERNS = [
     r"\b(bypass\s+your\s+restrictions|override\s+your\s+filters)\b",
 ]
 
-class ChatRequest(BaseModel):
-    message: str
-    subject: Optional[str] = None
-    grade_level: Optional[str] = None  # primary, secondary
+EDUCATIONAL_KEYWORDS = [
+    "spiegami", "spiegare", "spiegazione", "aiutami a capire", "come si fa", "esempio", "esercizio",
+    "non capisco", "non riesco", "guida", "metodo", "approccio",
+    "come si risolve", "passaggi", "procedimento", "teoria", "dimmi come",
+    "dall'immagine", "dalla foto", "in foto",
+]
+
 
 class ChatResponse(BaseModel):
     response: str
@@ -114,12 +122,16 @@ class ChatResponse(BaseModel):
     violation_reason: Optional[str] = None
 
 
-def check_school_context(message: str, subject: str = None) -> tuple[bool, str]:
+def check_school_context(
+    message: str,
+    subject: str = None,
+    has_images: bool = False,
+) -> tuple[bool, str]:
     """
     Verifica se la richiesta è in contesto scolastico.
     Returns: (is_valid, reason)
     """
-    message_lower = message.lower()
+    message_lower = message.lower().strip()
     
     # Check for prompt injection attacks
     for pattern in PROMPT_INJECTION_PATTERNS:
@@ -138,23 +150,24 @@ def check_school_context(message: str, subject: str = None) -> tuple[bool, str]:
         if not any(topic in subject_lower for topic in all_school_topics):
             return False, f"Materia '{subject}' non riconosciuta come scolastica"
     
-    # Verify the message contains educational intent
-    educational_keywords = [
-        "spiegami", "spiegare", "spiegazione", "aiutami a capire", "come si fa", "esempio", "esercizio",
-        "non capisco", "non riesco", "guida", "metodo", "approccio",
-        "come si risolve", "passaggi", "procedimento", "teoria", "dimmi come"
-    ]
-    
-    has_educational_intent = any(keyword in message_lower for keyword in educational_keywords)
-    
+    has_educational_intent = any(keyword in message_lower for keyword in EDUCATIONAL_KEYWORDS)
+
+    if has_images:
+        return True, "Valid"
+
+    if not message_lower:
+        return False, "Inserisci una domanda o allega un'immagine del compito"
+
     if not has_educational_intent and len(message) > 50:
-        # Long messages without educational keywords might be copy-paste of assignment
         return False, "Per favore, chiedi spiegazioni o esempi invece di inviare direttamente il compito"
     
     return True, "Valid"
 
 
-def build_system_prompt(grade_level: Optional[str] = None) -> str:
+def build_system_prompt(
+    grade_level: Optional[str] = None,
+    has_images: bool = False,
+) -> str:
     """
     System prompt that enforces the no-solution policy.
     """
@@ -163,6 +176,15 @@ def build_system_prompt(grade_level: Optional[str] = None) -> str:
         grade_context = "The student is in primary school. Use simple language and age-appropriate examples.\n"
     elif grade_level == "secondary":
         grade_context = "The student is in secondary school. You can use more advanced terminology.\n"
+
+    vision_context = ""
+    if has_images:
+        vision_context = """
+When the student shares an image of homework:
+- Identify the topic and concepts shown, but do NOT transcribe or solve the exact exercise in the image
+- Explain the underlying method and provide a SIMILAR example with different numbers or content
+- Guide the student to apply the method to their own exercise step by step
+"""
 
     return f"""You are a STUDY HELPER, not a homework solver. Your role is to:
 - Provide clear explanations of concepts
@@ -175,7 +197,7 @@ NEVER do these:
 - NEVER do the actual assignment for the student
 - NEVER give final answers without explanation
 - NEVER bypass the learning process
-
+{vision_context}
 When a student asks for help:
 1. Explain the underlying concept
 2. Show a SIMILAR example with different numbers/content
@@ -187,23 +209,43 @@ IMPORTANT: If the request asks for a direct solution, politely explain that you 
 {grade_context}Respond in Italian unless the student writes in another language."""
 
 
-async def call_llm(system_prompt: str, user_message: str) -> str:
+def build_user_content(user_message: str, images: list[ProcessedImage]) -> str | list:
+    """Build OpenAI-compatible user message content (text or multimodal)."""
+    if not images:
+        return user_message
+
+    content: list = [{"type": "text", "text": user_message}]
+    for image in images:
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:{image.mime_type};base64,{image.base64_data}"},
+        })
+    return content
+
+
+async def call_llm(
+    system_prompt: str,
+    user_message: str,
+    images: Optional[list[ProcessedImage]] = None,
+) -> str:
     """
     Chiamata all'LLM locale via API compatibile OpenAI.
     """
+    user_content = build_user_content(user_message, images or [])
+
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=LLM_TIMEOUT) as client:
             response = await client.post(
                 f"{LLM_ENDPOINT}/chat/completions",
                 json={
                     "model": LLM_MODEL,
                     "messages": [
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_message}
+                        {"role": "user", "content": user_content},
                     ],
                     "temperature": 0.7,
-                    "max_tokens": 1000
-                }
+                    "max_tokens": 1000,
+                },
             )
             response.raise_for_status()
             data = response.json()
@@ -216,30 +258,41 @@ async def call_llm(system_prompt: str, user_message: str) -> str:
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(
+    message: str = Form(""),
+    subject: Optional[str] = Form(None),
+    grade_level: Optional[str] = Form(None),
+    images: list[UploadFile] = File(default=[]),
+):
     """
-    Main chat endpoint with safety guardrails.
+    Main chat endpoint with safety guardrails. Accepts multipart form data with optional images.
     """
-    # Safety check 1: School context validation
-    is_valid, reason = check_school_context(request.message, request.subject)
+    processed_images = await validate_and_process_images(images)
+    has_images = len(processed_images) > 0
+
+    user_message = message.strip()
+    if not user_message and has_images:
+        user_message = DEFAULT_IMAGE_MESSAGE
+
+    if not user_message and not has_images:
+        raise HTTPException(status_code=400, detail="Messaggio o immagine richiesti")
+
+    is_valid, reason = check_school_context(user_message, subject, has_images=has_images)
     
     if not is_valid:
         return ChatResponse(
             response="Mi dispiace, ma posso aiutarti solo con domande relative allo studio e ai compiti scolastici. Posso spiegarti concetti, fare esempi e guidarti nel ragionamento, ma non posso svolgere i compiti al posto tuo.",
             is_helpful=False,
             safety_violation=True,
-            violation_reason=reason
+            violation_reason=reason,
         )
     
-    # Safety check 2: Enforce no-solution policy via system prompt
-    system_prompt = build_system_prompt(request.grade_level)
-    
-    # Call LLM
-    response_text = await call_llm(system_prompt, request.message)
+    system_prompt = build_system_prompt(grade_level, has_images=has_images)
+    response_text = await call_llm(system_prompt, user_message, processed_images)
     
     return ChatResponse(
         response=response_text,
-        is_helpful=True
+        is_helpful=True,
     )
 
 
@@ -260,8 +313,14 @@ async def info():
             "No complete homework solutions",
             "School context only",
             "Primary and secondary education subjects",
-            "Explanations and examples only"
-        ]
+            "Explanations and examples only",
+            "Homework images processed in memory only, never stored",
+        ],
+        "uploads": {
+            "max_images": int(os.getenv("MAX_IMAGE_COUNT", "3")),
+            "max_bytes_per_image": int(os.getenv("MAX_IMAGE_BYTES", str(5 * 1024 * 1024))),
+            "allowed_types": ["image/jpeg", "image/png", "image/webp"],
+        },
     }
 
 

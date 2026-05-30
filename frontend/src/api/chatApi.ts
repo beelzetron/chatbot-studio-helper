@@ -5,15 +5,26 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 30000,
-  headers: {
-    'Content-Type': 'application/json',
-  },
+  timeout: 60000,
 });
 
 export const chatApi = {
   async sendMessage(request: ChatRequest): Promise<ChatResponse> {
-    const response = await apiClient.post<ChatResponse>('/chat', request);
+    const formData = new FormData();
+    formData.append('message', request.message);
+
+    if (request.subject) {
+      formData.append('subject', request.subject);
+    }
+    if (request.grade_level) {
+      formData.append('grade_level', request.grade_level);
+    }
+
+    for (const image of request.images ?? []) {
+      formData.append('images', image);
+    }
+
+    const response = await apiClient.post<ChatResponse>('/chat', formData);
     return response.data;
   },
 
@@ -27,6 +38,11 @@ export const chatApi = {
     version: string;
     description: string;
     guardrails: string[];
+    uploads?: {
+      max_images: number;
+      max_bytes_per_image: number;
+      allowed_types: string[];
+    };
   }> {
     const response = await apiClient.get('/info');
     return response.data;

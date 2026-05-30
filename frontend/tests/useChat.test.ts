@@ -118,4 +118,24 @@ describe('useChat', () => {
       expect(result.current.messages[1].isWarning).toBe(true);
     });
   });
+
+  it('includes attachment previews in user message', async () => {
+    mockedChatApi.sendMessage.mockResolvedValue({
+      response: 'Ecco una spiegazione',
+      is_helpful: true,
+    });
+
+    const file = new File(['img'], 'test.jpg', { type: 'image/jpeg' });
+    const { result } = renderHook(() => useChat());
+
+    await result.current.sendMessage({
+      message: 'Aiutami',
+      images: [file],
+    });
+
+    await waitFor(() => {
+      expect(result.current.messages[0].attachments).toHaveLength(1);
+      expect(result.current.messages[0].attachments?.[0].name).toBe('test.jpg');
+    });
+  });
 });

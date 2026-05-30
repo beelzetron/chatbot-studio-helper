@@ -2,6 +2,7 @@ export interface ChatRequest {
   message: string;
   subject?: string;
   grade_level?: 'primary' | 'secondary';
+  images?: File[];
 }
 
 export interface ChatResponse {
@@ -11,12 +12,24 @@ export interface ChatResponse {
   violation_reason?: string;
 }
 
+export interface MessageAttachment {
+  previewUrl: string;
+  name: string;
+}
+
 export interface Message {
   id: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
   timestamp: Date;
   isWarning?: boolean;
+  attachments?: MessageAttachment[];
+}
+
+export interface AttachmentPreview {
+  id: string;
+  file: File;
+  previewUrl: string;
 }
 
 export interface Subject {
@@ -24,6 +37,10 @@ export interface Subject {
   icon: string;
   description: string;
 }
+
+export const MAX_IMAGE_COUNT = 3;
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+export const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
 export const SCHOOL_SUBJECTS: Subject[] = [
   { name: 'Matematica', icon: 'calculator', description: 'Algebra, geometria, calcolo' },
