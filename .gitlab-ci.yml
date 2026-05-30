@@ -18,6 +18,7 @@ stages:
 
 # Backend Tests
 test-backend:
+  image: python:3.12-slim
   stage: test-backend
   script:
     - echo "Running backend tests..."
