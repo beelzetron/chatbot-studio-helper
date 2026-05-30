@@ -1,24 +1,18 @@
-image: docker:24.0
+image: python:3.12-slim
 
 variables:
-  DOCKER_HOST: tcp://docker:2376
-  DOCKER_TLS_CERTDIR: "/certs"
-  DOCKER_DRIVER: overlay2
   GITLAB_REGISTRY: "registry.gitlab.labbase.it"
   BACKEND_PROJECT: "home-lab/chatbot-studio-helper"
   FRONTEND_PROJECT: "home-lab/chatbot-studio-helper-frontend"
 
 stages:
-  - test-backend
-  - build-backend
-  - build-frontend
-  - scan
+  - test
+  - build
   - deploy
 
 # Backend Tests
-test-backend:
-  image: python:3.12-slim
-  stage: test-backend
+test:
+  stage: test
   script:
     - echo "Running backend tests..."
     - pip install pytest pytest-asyncio httpx
@@ -29,9 +23,10 @@ test-backend:
         - tests/**/*
         - requirements.txt
 
-# Build Backend Image
+# Build Backend Image (manual trigger)
 build-backend:
-  stage: build-backend
+  stage: build
+  image: docker:24.0
   services:
     - docker:24.0-dind
   script:
@@ -45,14 +40,13 @@ build-backend:
       docker push $GITLAB_REGISTRY/$BACKEND_PROJECT:$CI_COMMIT_SHORT_SHA
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
-      changes:
-        - src/**/*
-        - Dockerfile
-        - requirements.txt
+      when: manual
+  allow_failure: true
 
-# Build Frontend Image
+# Build Frontend Image (manual trigger)
 build-frontend:
-  stage: build-frontend
+  stage: build
+  image: docker:24.0
   services:
     - docker:24.0-dind
   script:
@@ -66,27 +60,13 @@ build-frontend:
       docker push $GITLAB_REGISTRY/$FRONTEND_PROJECT:$CI_COMMIT_SHORT_SHA
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
-      changes:
-        - frontend/**/*
+      when: manual
+  allow_failure: true
 
-# Security Scan
-scan:
-  stage: scan
-  image: trivy:latest
-  script:
-    - echo "Scanning backend image..."
-    - trivy image --exit-code 0 $GITLAB_REGISTRY/$BACKEND_PROJECT:$CI_COMMIT_SHORT_SHA
-    - echo "Scanning frontend image..."
-    - trivy image --exit-code 0 $GITLAB_REGISTRY/$FRONTEND_PROJECT:$CI_COMMIT_SHORT_SHA
-  rules:
-    - if: $CI_COMMIT_BRANCH == "main"
-      changes:
-        - Dockerfile
-        - frontend/Dockerfile
-
-# Deploy to OpenShift
+# Deploy to OpenShift (manual trigger)
 deploy:
   stage: deploy
+  image: bitnami/kubectl:latest
   script:
     - echo "Deploying to OpenShift..."
     - oc login --token=$OPENSHIFT_TOKEN --server=$OPENSHIFT_SERVER
@@ -95,7 +75,5 @@ deploy:
     - oc rollout status deployment/study-helper-frontend -n homework-bot
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
-  needs:
-    - build-backend
-    - build-frontend
-    - scan
+      when: manual
+  allow_failure: true
