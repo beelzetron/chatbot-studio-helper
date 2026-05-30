@@ -37,7 +37,7 @@ test-frontend:
   script:
     - echo "Running frontend tests..."
     - cd frontend
-    - npm ci
+    - npm install
     - npm run test -- --run
   rules:
     - changes:
