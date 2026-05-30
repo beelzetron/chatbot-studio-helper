@@ -57,11 +57,11 @@ build-backend:
       docker push $GITLAB_REGISTRY/$BACKEND_PROJECT:latest
       docker push $GITLAB_REGISTRY/$BACKEND_PROJECT:$CI_COMMIT_SHORT_SHA
   rules:
-    - changes:
+    - if: $CI_COMMIT_BRANCH == "main"
+      changes:
         - src/**/*
         - Dockerfile
         - requirements.txt
-    - branch: main
 
 # Build Frontend Image
 build-frontend:
@@ -78,9 +78,9 @@ build-frontend:
       docker push $GITLAB_REGISTRY/$FRONTEND_PROJECT:latest
       docker push $GITLAB_REGISTRY/$FRONTEND_PROJECT:$CI_COMMIT_SHORT_SHA
   rules:
-    - changes:
+    - if: $CI_COMMIT_BRANCH == "main"
+      changes:
         - frontend/**/*
-    - branch: main
 
 # Security Scan
 scan:
@@ -92,10 +92,10 @@ scan:
     - echo "Scanning frontend image..."
     - trivy image --exit-code 0 $GITLAB_REGISTRY/$FRONTEND_PROJECT:$CI_COMMIT_SHORT_SHA
   rules:
-    - changes:
+    - if: $CI_COMMIT_BRANCH == "main"
+      changes:
         - Dockerfile
         - frontend/Dockerfile
-    - branch: main
 
 # Deploy to OpenShift
 deploy:
@@ -107,7 +107,7 @@ deploy:
     - oc rollout status deployment/study-helper-chatbot -n homework-bot
     - oc rollout status deployment/study-helper-frontend -n homework-bot
   rules:
-    - branch: main
+    - if: $CI_COMMIT_BRANCH == "main"
   needs:
     - build-backend
     - build-frontend
