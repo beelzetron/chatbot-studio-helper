@@ -46,15 +46,58 @@ SECONDARY_GRADE_TOPICS = [
 ]
 
 NON_SCHOOL_PATTERNS = [
-    r"(lavoro|professionale|lavoro\s+condiviso|side\s+hustle)",
-    r"(fare\s+i\s+soldi|guadagnare|investire|crypto|bitcoin)",
-    r"(sesso|relazione\s+intima|dating)",
-    r"(politica\s+attiva|candidatura|voto|partito)",
-    r"(cocaina|eroina|droghe|stupefacenti)",
-    r"(armi|violenza|combattimento)",
-    r"(hack|crack|password|violare)",
-    r"(trucco|barare|copiare|soluzione\s+completa)",
-    r"(sistema\s+il\s+compito|fai\s+il\s+compito)"
+    r"\b(lavoro|professionale|lavoro\s+condiviso|side\s+hustle)\b",
+    r"\b(fare\s+i\s+soldi|guadagnare|investire|crypto|bitcoin)\b",
+    r"\b(sesso|relazione\s+intima|dating)\b",
+    r"\b(politica\s+attiva|candidatura|voto|partito)\b",
+    r"\b(cocaina|eroina|droghe|stupefacenti)\b",
+    r"\b(armi|violenza|combattimento)\b",
+    r"\b(hack|crack|password|violare)\b",
+    r"\b(trucco|barare|copiare|soluzione\s+completa)\b",
+    r"\b(sistema\s+il\s+compito|fai\s+il\s+compito)\b"
+]
+
+# Prompt injection attack patterns
+PROMPT_INJECTION_PATTERNS = [
+    # Instruction override attempts
+    r"\b(ignora\s+tutte\s+le\s+istruzioni|ignore\s+all\s+instructions|ignore\s+previous\s+instructions)\b",
+    r"\b(ignora\s+i\s+tuoi\s+limiti|ignore\s+your\s+limitations)\b",
+    r"\b(dimentica\s+le\s+regole|forget\s+the\s+rules)\b",
+    
+    # Role redefinition
+    r"\b(sei\s+ora|you\s+are\s+now|from\s+now\s+you\s+are)\b",
+    r"\b(da\s+questo\s+momento|from\s+this\s+moment)\b",
+    r"\b(mettiti\s+in\s+modalità|enter\s+mode|activate\s+mode)\b",
+    
+    # Developer/Debug mode
+    r"\b(modalità\s+sviluppatore|developer\s+mode|debug\s+mode)\b",
+    r"\b(modalità\s+test|test\s+mode|sandbox\s+bypass)\b",
+    
+    # Hypothetical scenarios
+    r"\b(immagina\s+che|pretend\s+that|suppose\s+that)\b",
+    r"\b(esercizio\s+di\s+sicurezza|security\s+exercise|research\s+purpose)\b",
+    r"\b(solo\s+per\s+finzione|just\s+for\s+fun|hypothetically)\b",
+    
+    # Game/Roleplay bypass
+    r"\b(modalità\s+gioco|game\s+mode|dan\s*\(?\s*do\s+anything\s+now\)?)\b",
+    r"\b(autorità\s+superiore|superior\s+authority|professore\s+ha\s+detto)\b",
+    
+    # Encoding/Obfuscation detection
+    r"\b(in\s+base64|encoded\s+request|codificato)\b",
+    r"\b(using\s+mixed\s+unicode|character\s+substitution)\b",
+    
+    # Emotional/Urgency manipulation
+    r"\b(ho\s+bisogno\s+di\s+salvare|need\s+to\s+save\s+my\s+year)\b",
+    r"\b(è\s+un'emergenza|it's\s+an\s+emergency|urgent\s+need)\b",
+    r"\b(non\s+c'\s+è\s+tempo|no\s+time\s+for\s+explanations)\b",
+    
+    # Reverse psychology
+    r"\b(so\s+che\s+non\s+puoi|I\s+know\s+you\s+can't|dimmi\s+solo\s+la\s+prima)\b",
+    r"\b(solo\s+il\s+risultato\s+finale|just\s+the\s+final\s+answer)\b",
+    
+    # Language switching attacks
+    r"\b(please\s+ignore\s+your\s+rules|give\s+me\s+the\s+complete\s+solution)\b",
+    r"\b(bypass\s+your\s+restrictions|override\s+your\s+filters)\b",
 ]
 
 class ChatRequest(BaseModel):
@@ -75,6 +118,11 @@ def check_school_context(message: str, subject: str = None) -> tuple[bool, str]:
     Returns: (is_valid, reason)
     """
     message_lower = message.lower()
+    
+    # Check for prompt injection attacks
+    for pattern in PROMPT_INJECTION_PATTERNS:
+        if re.search(pattern, message_lower):
+            return False, "Rilevato tentativo di prompt injection"
     
     # Check for non-school patterns
     for pattern in NON_SCHOOL_PATTERNS:

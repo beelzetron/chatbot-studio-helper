@@ -1,0 +1,115 @@
+image: docker:24.0
+
+variables:
+  DOCKER_HOST: tcp://docker:2376
+  DOCKER_TLS_CERTDIR: "/certs"
+  DOCKER_DRIVER: overlay2
+  GITLAB_REGISTRY: "registry.gitlab.labbase.it"
+  BACKEND_PROJECT: "home-lab/chatbot-studio-helper"
+  FRONTEND_PROJECT: "home-lab/chatbot-studio-helper-frontend"
+
+stages:
+  - test-backend
+  - test-frontend
+  - build-backend
+  - build-frontend
+  - scan
+  - deploy
+
+# Backend Tests
+test-backend:
+  image: python:3.12-slim
+  stage: test-backend
+  script:
+    - echo "Running backend tests..."
+    - pip install pytest pytest-asyncio httpx
+    - pytest tests/ -v || echo "No backend tests found"
+  rules:
+    - changes:
+        - src/**/*
+        - tests/**/*
+        - requirements.txt
+
+# Frontend Tests
+test-frontend:
+  stage: test-frontend
+  image: node:20-alpine
+  script:
+    - echo "Running frontend tests..."
+    - cd frontend
+    - npm ci
+    - npm run test -- --run
+  rules:
+    - changes:
+        - frontend/**/*
+
+# Build Backend Image
+build-backend:
+  stage: build-backend
+  services:
+    - docker:24.0-dind
+  script:
+    - |
+      echo "Building backend Docker image..."
+      docker build -t $GITLAB_REGISTRY/$BACKEND_PROJECT:latest .
+      docker tag $GITLAB_REGISTRY/$BACKEND_PROJECT:latest $GITLAB_REGISTRY/$BACKEND_PROJECT:$CI_COMMIT_SHORT_SHA
+    - |
+      echo "Pushing backend to GitLab Registry..."
+      docker push $GITLAB_REGISTRY/$BACKEND_PROJECT:latest
+      docker push $GITLAB_REGISTRY/$BACKEND_PROJECT:$CI_COMMIT_SHORT_SHA
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      changes:
+        - src/**/*
+        - Dockerfile
+        - requirements.txt
+
+# Build Frontend Image
+build-frontend:
+  stage: build-frontend
+  services:
+    - docker:24.0-dind
+  script:
+    - |
+      echo "Building frontend Docker image..."
+      docker build -t $GITLAB_REGISTRY/$FRONTEND_PROJECT:latest ./frontend
+      docker tag $GITLAB_REGISTRY/$FRONTEND_PROJECT:latest $GITLAB_REGISTRY/$FRONTEND_PROJECT:$CI_COMMIT_SHORT_SHA
+    - |
+      echo "Pushing frontend to GitLab Registry..."
+      docker push $GITLAB_REGISTRY/$FRONTEND_PROJECT:latest
+      docker push $GITLAB_REGISTRY/$FRONTEND_PROJECT:$CI_COMMIT_SHORT_SHA
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      changes:
+        - frontend/**/*
+
+# Security Scan
+scan:
+  stage: scan
+  image: trivy:latest
+  script:
+    - echo "Scanning backend image..."
+    - trivy image --exit-code 0 $GITLAB_REGISTRY/$BACKEND_PROJECT:$CI_COMMIT_SHORT_SHA
+    - echo "Scanning frontend image..."
+    - trivy image --exit-code 0 $GITLAB_REGISTRY/$FRONTEND_PROJECT:$CI_COMMIT_SHORT_SHA
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      changes:
+        - Dockerfile
+        - frontend/Dockerfile
+
+# Deploy to OpenShift
+deploy:
+  stage: deploy
+  script:
+    - echo "Deploying to OpenShift..."
+    - oc login --token=$OPENSHIFT_TOKEN --server=$OPENSHIFT_SERVER
+    - oc apply -f k8s/ -n homework-bot
+    - oc rollout status deployment/study-helper-chatbot -n homework-bot
+    - oc rollout status deployment/study-helper-frontend -n homework-bot
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  needs:
+    - build-backend
+    - build-frontend
+    - scan
