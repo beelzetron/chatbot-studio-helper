@@ -5,41 +5,57 @@ variables:
   DOCKER_TLS_CERTDIR: "/certs"
   DOCKER_DRIVER: overlay2
   GITLAB_REGISTRY: "registry.gitlab.labbase.it"
-  PROJECT_PATH: "home-lab/chatbot-studio-helper"
+  BACKEND_PROJECT: "home-lab/chatbot-studio-helper"
+  FRONTEND_PROJECT: "home-lab/chatbot-studio-helper-frontend"
 
 stages:
-  - test
-  - build
+  - test-backend
+  - test-frontend
+  - build-backend
+  - build-frontend
   - scan
   - deploy
 
-# Run unit tests
-test:
-  stage: test
+# Backend Tests
+test-backend:
+  stage: test-backend
   script:
-    - echo "Running tests..."
+    - echo "Running backend tests..."
     - pip install pytest pytest-asyncio httpx
-    - pytest tests/ -v || echo "No tests found, skipping"
+    - pytest tests/ -v || echo "No backend tests found"
   rules:
     - changes:
         - src/**/*
         - tests/**/*
         - requirements.txt
 
-# Build Docker image
-build:
-  stage: build
+# Frontend Tests
+test-frontend:
+  stage: test-frontend
+  image: node:20-alpine
+  script:
+    - echo "Running frontend tests..."
+    - cd frontend
+    - npm ci
+    - npm run test -- --run
+  rules:
+    - changes:
+        - frontend/**/*
+
+# Build Backend Image
+build-backend:
+  stage: build-backend
   services:
     - docker:24.0-dind
   script:
     - |
-      echo "Building Docker image..."
-      docker build -t $GITLAB_REGISTRY/$PROJECT_PATH:latest .
-      docker tag $GITLAB_REGISTRY/$PROJECT_PATH:latest $GITLAB_REGISTRY/$PROJECT_PATH:$CI_COMMIT_SHORT_SHA
+      echo "Building backend Docker image..."
+      docker build -t $GITLAB_REGISTRY/$BACKEND_PROJECT:latest .
+      docker tag $GITLAB_REGISTRY/$BACKEND_PROJECT:latest $GITLAB_REGISTRY/$BACKEND_PROJECT:$CI_COMMIT_SHORT_SHA
     - |
-      echo "Pushing to GitLab Registry..."
-      docker push $GITLAB_REGISTRY/$PROJECT_PATH:latest
-      docker push $GITLAB_REGISTRY/$PROJECT_PATH:$CI_COMMIT_SHORT_SHA
+      echo "Pushing backend to GitLab Registry..."
+      docker push $GITLAB_REGISTRY/$BACKEND_PROJECT:latest
+      docker push $GITLAB_REGISTRY/$BACKEND_PROJECT:$CI_COMMIT_SHORT_SHA
   rules:
     - changes:
         - src/**/*
@@ -47,15 +63,38 @@ build:
         - requirements.txt
     - branch: main
 
-# Security scan
+# Build Frontend Image
+build-frontend:
+  stage: build-frontend
+  services:
+    - docker:24.0-dind
+  script:
+    - |
+      echo "Building frontend Docker image..."
+      docker build -t $GITLAB_REGISTRY/$FRONTEND_PROJECT:latest ./frontend
+      docker tag $GITLAB_REGISTRY/$FRONTEND_PROJECT:latest $GITLAB_REGISTRY/$FRONTEND_PROJECT:$CI_COMMIT_SHORT_SHA
+    - |
+      echo "Pushing frontend to GitLab Registry..."
+      docker push $GITLAB_REGISTRY/$FRONTEND_PROJECT:latest
+      docker push $GITLAB_REGISTRY/$FRONTEND_PROJECT:$CI_COMMIT_SHORT_SHA
+  rules:
+    - changes:
+        - frontend/**/*
+    - branch: main
+
+# Security Scan
 scan:
   stage: scan
   image: trivy:latest
   script:
-    - trivy image --exit-code 0 $GITLAB_REGISTRY/$PROJECT_PATH:$CI_COMMIT_SHORT_SHA
+    - echo "Scanning backend image..."
+    - trivy image --exit-code 0 $GITLAB_REGISTRY/$BACKEND_PROJECT:$CI_COMMIT_SHORT_SHA
+    - echo "Scanning frontend image..."
+    - trivy image --exit-code 0 $GITLAB_REGISTRY/$FRONTEND_PROJECT:$CI_COMMIT_SHORT_SHA
   rules:
     - changes:
         - Dockerfile
+        - frontend/Dockerfile
     - branch: main
 
 # Deploy to OpenShift
@@ -66,8 +105,10 @@ deploy:
     - oc login --token=$OPENSHIFT_TOKEN --server=$OPENSHIFT_SERVER
     - oc apply -f k8s/ -n homework-bot
     - oc rollout status deployment/study-helper-chatbot -n homework-bot
+    - oc rollout status deployment/study-helper-frontend -n homework-bot
   rules:
     - branch: main
   needs:
-    - build
+    - build-backend
+    - build-frontend
     - scan
