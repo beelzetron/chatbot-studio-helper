@@ -1,9 +1,15 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import App from '../src/App';
-import axios from 'axios';
+import { chatApi } from '../src/api/chatApi';
 
-const mockedAxios = vi.mocked(axios, true);
+vi.mock('../src/api/chatApi', () => ({
+  chatApi: {
+    sendMessage: vi.fn(),
+  },
+}));
+
+const mockedChatApi = vi.mocked(chatApi);
 
 describe('App', () => {
   beforeEach(() => {
@@ -36,7 +42,7 @@ describe('App', () => {
 
   it('has send and clear buttons', () => {
     render(<App />);
-    expect(screen.getByRole('button', { name: /send/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /invia/i })).toBeInTheDocument();
     expect(screen.getByTitle('Pulisci chat')).toBeInTheDocument();
   });
 
@@ -50,11 +56,9 @@ describe('App', () => {
   });
 
   it('submits message when pressing send button', async () => {
-    mockedAxios.post.mockResolvedValue({
-      data: {
-        response: 'This is a test response',
-        is_helpful: true,
-      },
+    mockedChatApi.sendMessage.mockResolvedValue({
+      response: 'This is a test response',
+      is_helpful: true,
     });
 
     render(<App />);
@@ -62,41 +66,42 @@ describe('App', () => {
     const input = screen.getByPlaceholderText('Chiedi spiegazioni o esempi...');
     await fireEvent.change(input, { target: { value: 'Test question' } });
     
-    const sendButton = screen.getByRole('button', { name: /send/i });
+    const sendButton = screen.getByRole('button', { name: /invia/i });
     await fireEvent.click(sendButton);
     
     await waitFor(() => {
-      expect(mockedAxios.post).toHaveBeenCalledWith('/api/chat', expect.any(Object));
+      expect(mockedChatApi.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Test question' })
+      );
     });
   });
 
   it('displays loading state while waiting for response', async () => {
-    const promise = new Promise(() => {}); // Never resolves
-    mockedAxios.post.mockReturnValue(promise as any);
+    const promise = new Promise(() => {});
+    mockedChatApi.sendMessage.mockReturnValue(promise as ReturnType<typeof chatApi.sendMessage>);
 
     render(<App />);
     
     const input = screen.getByPlaceholderText('Chiedi spiegazioni o esempi...');
     await fireEvent.change(input, { target: { value: 'Test question' } });
     
-    const sendButton = screen.getByRole('button', { name: /send/i });
+    const sendButton = screen.getByRole('button', { name: /invia/i });
     await fireEvent.click(sendButton);
     
-    // Check for loading indicator (three bouncing dots)
     await waitFor(() => {
-      expect(screen.queryByRole('status')).toBeInTheDocument();
-    }, { timeout: 1000 });
+      expect(input).toBeDisabled();
+    });
   });
 
   it('displays error message when API fails', async () => {
-    mockedAxios.post.mockRejectedValue(new Error('Network error'));
+    mockedChatApi.sendMessage.mockRejectedValue(new Error('Network error'));
 
     render(<App />);
     
     const input = screen.getByPlaceholderText('Chiedi spiegazioni o esempi...');
     await fireEvent.change(input, { target: { value: 'Test question' } });
     
-    const sendButton = screen.getByRole('button', { name: /send/i });
+    const sendButton = screen.getByRole('button', { name: /invia/i });
     await fireEvent.click(sendButton);
     
     await waitFor(() => {

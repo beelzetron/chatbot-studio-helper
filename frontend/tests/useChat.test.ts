@@ -1,9 +1,15 @@
 import { renderHook, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useChat } from '../src/hooks/useChat';
-import axios from 'axios';
+import { chatApi } from '../src/api/chatApi';
 
-const mockedAxios = vi.mocked(axios, true);
+vi.mock('../src/api/chatApi', () => ({
+  chatApi: {
+    sendMessage: vi.fn(),
+  },
+}));
+
+const mockedChatApi = vi.mocked(chatApi);
 
 describe('useChat', () => {
   beforeEach(() => {
@@ -19,11 +25,9 @@ describe('useChat', () => {
   });
 
   it('adds user message when sending', async () => {
-    mockedAxios.post.mockResolvedValue({
-      data: {
-        response: 'Test response',
-        is_helpful: true,
-      },
+    mockedChatApi.sendMessage.mockResolvedValue({
+      response: 'Test response',
+      is_helpful: true,
     });
 
     const { result } = renderHook(() => useChat());
@@ -44,7 +48,7 @@ describe('useChat', () => {
   });
 
   it('handles API error gracefully', async () => {
-    mockedAxios.post.mockRejectedValue(new Error('Network error'));
+    mockedChatApi.sendMessage.mockRejectedValue(new Error('Network error'));
 
     const { result } = renderHook(() => useChat());
     
@@ -61,8 +65,11 @@ describe('useChat', () => {
   });
 
   it('sets loading state during request', async () => {
-    const promise = new Promise(() => {});
-    mockedAxios.post.mockReturnValue(promise as any);
+    let resolvePromise: (value: unknown) => void;
+    const promise = new Promise((resolve) => {
+      resolvePromise = resolve;
+    });
+    mockedChatApi.sendMessage.mockReturnValue(promise as ReturnType<typeof chatApi.sendMessage>);
 
     const { result } = renderHook(() => useChat());
     
@@ -70,29 +77,35 @@ describe('useChat', () => {
       message: 'Test question',
     });
 
-    expect(result.current.isLoading).toBe(true);
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(true);
+    });
 
+    resolvePromise!({
+      response: 'Done',
+      is_helpful: true,
+    });
     await requestPromise;
-    expect(result.current.isLoading).toBe(false);
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
   });
 
   it('clears messages when requested', () => {
     const { result } = renderHook(() => useChat());
     
-    // Add some messages
     result.current.clearMessages();
     
     expect(result.current.messages).toEqual([]);
   });
 
   it('handles safety violation response', async () => {
-    mockedAxios.post.mockResolvedValue({
-      data: {
-        response: 'I cannot help with that',
-        is_helpful: false,
-        safety_violation: true,
-        violation_reason: 'Non school topic',
-      },
+    mockedChatApi.sendMessage.mockResolvedValue({
+      response: 'I cannot help with that',
+      is_helpful: false,
+      safety_violation: true,
+      violation_reason: 'Non school topic',
     });
 
     const { result } = renderHook(() => useChat());

@@ -4,7 +4,7 @@ Enhanced tests for Study Helper Chatbot
 import pytest
 from src.main import (
     check_school_context,
-    enforce_no_solution_policy,
+    build_system_prompt,
     NON_SCHOOL_PATTERNS,
     PROMPT_INJECTION_PATTERNS,
     SCHOOL_SUBJECTS,
@@ -100,23 +100,32 @@ class TestNoSolutionPolicy:
     
     def test_system_prompt_includes_policy(self):
         """System prompt should contain no-solution instructions."""
-        prompt = enforce_no_solution_policy("Help me with math")
+        prompt = build_system_prompt()
         assert "NEVER provide complete solutions" in prompt
         assert "STUDY HELPER" in prompt
         assert "not a homework solver" in prompt
     
-    def test_system_prompt_includes_user_request(self):
-        """System prompt should include the user's actual request."""
-        user_message = "Come si risolve x^2 + 5x + 6 = 0?"
-        prompt = enforce_no_solution_policy(user_message)
-        assert user_message in prompt
+    def test_system_prompt_excludes_user_request(self):
+        """System prompt should not embed the user's message."""
+        prompt = build_system_prompt()
+        assert "Student's request:" not in prompt
     
     def test_system_prompt_guidance(self):
         """System prompt should provide guidance on how to help."""
-        prompt = enforce_no_solution_policy("test")
+        prompt = build_system_prompt()
         assert "Provide clear explanations" in prompt
         assert "Give EXAMPLES" in prompt
         assert "Guide students" in prompt
+
+    def test_system_prompt_primary_grade(self):
+        """System prompt should include primary grade context."""
+        prompt = build_system_prompt("primary")
+        assert "primary school" in prompt
+
+    def test_system_prompt_secondary_grade(self):
+        """System prompt should include secondary grade context."""
+        prompt = build_system_prompt("secondary")
+        assert "secondary school" in prompt
 
 
 class TestSubjectList:

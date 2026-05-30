@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import axios from 'axios';
+import { chatApi } from '../api/chatApi';
 import type { ChatRequest, ChatResponse, Message } from '../types/chat';
 
 export function useChat() {
@@ -21,19 +21,19 @@ export function useChat() {
 
       setMessages(prev => [...prev, userMessage]);
 
-      const response = await axios.post<ChatResponse>('/api/chat', request);
+      const response = await chatApi.sendMessage(request);
       
       const assistantMessage: Message = {
         id: crypto.randomUUID(),
         role: 'assistant',
-        content: response.data.response,
+        content: response.response,
         timestamp: new Date(),
-        isWarning: response.data.safety_violation,
+        isWarning: response.safety_violation,
       };
 
       setMessages(prev => [...prev, assistantMessage]);
       
-      return response.data;
+      return response;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Errore sconosciuto';
       setError(errorMessage);

@@ -4,6 +4,7 @@ variables:
   GITLAB_REGISTRY: "registry.gitlab.labbase.it"
   BACKEND_PROJECT: "home-lab/chatbot-studio-helper"
   FRONTEND_PROJECT: "home-lab/chatbot-studio-helper-frontend"
+  PYTHONPATH: "."
 
 stages:
   - test
@@ -11,17 +12,28 @@ stages:
   - deploy
 
 # Backend Tests
-test:
+test-backend:
   stage: test
   script:
-    - echo "Running backend tests..."
-    - pip install pytest pytest-asyncio httpx
-    - pytest tests/ -v || echo "No backend tests found"
+    - pip install -r requirements.txt pytest pytest-asyncio
+    - pytest tests/ -v
   rules:
     - changes:
         - src/**/*
         - tests/**/*
         - requirements.txt
+
+# Frontend Tests
+test-frontend:
+  stage: test
+  image: node:20-alpine
+  script:
+    - cd frontend
+    - npm ci
+    - npm run test -- --run
+  rules:
+    - changes:
+        - frontend/**/*
 
 # Build Backend Image (manual trigger)
 build-backend:

@@ -6,6 +6,7 @@ Guardrail implementati per prevenire utilizzi impropri.
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from typing import Optional
 import httpx
 import re
 import os
@@ -54,7 +55,8 @@ NON_SCHOOL_PATTERNS = [
     r"\b(armi|violenza|combattimento)\b",
     r"\b(hack|crack|password|violare)\b",
     r"\b(trucco|barare|copiare|soluzione\s+completa)\b",
-    r"\b(sistema\s+il\s+compito|fai\s+il\s+compito)\b"
+    r"\b(sistema\s+il\s+compito|fai\s+il\s+compito|fammi\s+il\s+compito)\b",
+    r"\b(poker|casino|scommesse|gambling|azzardo)\b",
 ]
 
 # Prompt injection attack patterns
@@ -92,24 +94,24 @@ PROMPT_INJECTION_PATTERNS = [
     r"\b(non\s+c'\s+è\s+tempo|no\s+time\s+for\s+explanations)\b",
     
     # Reverse psychology
-    r"\b(so\s+che\s+non\s+puoi|I\s+know\s+you\s+can't|dimmi\s+solo\s+la\s+prima)\b",
+    r"\b(so\s+che\s+non\s+puoi|I\s+know\s+you\s+(?:can'?t|cannot)|dimmi\s+solo\s+la\s+prima)\b",
     r"\b(solo\s+il\s+risultato\s+finale|just\s+the\s+final\s+answer)\b",
     
     # Language switching attacks
-    r"\b(please\s+ignore\s+your\s+rules|give\s+me\s+the\s+complete\s+solution)\b",
+    r"\b(please\s+ignore\s+your\s+rules|give\s+me\s+the\s+complete\s+(?:solution|answer))\b",
     r"\b(bypass\s+your\s+restrictions|override\s+your\s+filters)\b",
 ]
 
 class ChatRequest(BaseModel):
     message: str
-    subject: str = None
-    grade_level: str = None  # primary, secondary
+    subject: Optional[str] = None
+    grade_level: Optional[str] = None  # primary, secondary
 
 class ChatResponse(BaseModel):
     response: str
     is_helpful: bool
     safety_violation: bool = False
-    violation_reason: str = None
+    violation_reason: Optional[str] = None
 
 
 def check_school_context(message: str, subject: str = None) -> tuple[bool, str]:
@@ -121,12 +123,12 @@ def check_school_context(message: str, subject: str = None) -> tuple[bool, str]:
     
     # Check for prompt injection attacks
     for pattern in PROMPT_INJECTION_PATTERNS:
-        if re.search(pattern, message_lower):
+        if re.search(pattern, message_lower, re.IGNORECASE):
             return False, "Rilevato tentativo di prompt injection"
     
     # Check for non-school patterns
     for pattern in NON_SCHOOL_PATTERNS:
-        if re.search(pattern, message_lower):
+        if re.search(pattern, message_lower, re.IGNORECASE):
             return False, "Richiesta fuori dal contesto scolastico"
     
     # Check if subject is school-related
@@ -138,9 +140,9 @@ def check_school_context(message: str, subject: str = None) -> tuple[bool, str]:
     
     # Verify the message contains educational intent
     educational_keywords = [
-        "spiegami", "aiutami a capire", "come si fa", "esempio", "esercizio",
+        "spiegami", "spiegare", "spiegazione", "aiutami a capire", "come si fa", "esempio", "esercizio",
         "non capisco", "non riesco", "guida", "metodo", "approccio",
-        "come si risolve", "passaggi", "procedimento", "teoria"
+        "come si risolve", "passaggi", "procedimento", "teoria", "dimmi come"
     ]
     
     has_educational_intent = any(keyword in message_lower for keyword in educational_keywords)
@@ -152,10 +154,16 @@ def check_school_context(message: str, subject: str = None) -> tuple[bool, str]:
     return True, "Valid"
 
 
-def enforce_no_solution_policy(message: str) -> str:
+def build_system_prompt(grade_level: Optional[str] = None) -> str:
     """
-    Aggiunge un system prompt che impone il divieto di fornire soluzioni complete.
+    System prompt that enforces the no-solution policy.
     """
+    grade_context = ""
+    if grade_level == "primary":
+        grade_context = "The student is in primary school. Use simple language and age-appropriate examples.\n"
+    elif grade_level == "secondary":
+        grade_context = "The student is in secondary school. You can use more advanced terminology.\n"
+
     return f"""You are a STUDY HELPER, not a homework solver. Your role is to:
 - Provide clear explanations of concepts
 - Give EXAMPLES that illustrate the method
@@ -176,7 +184,7 @@ When a student asks for help:
 
 IMPORTANT: If the request asks for a direct solution, politely explain that you help with learning, not doing homework. Say something like: "I can't provide the direct answer, but I can explain the concept and show you an example that will help you solve it yourself."
 
-Student's request: {message}"""
+{grade_context}Respond in Italian unless the student writes in another language."""
 
 
 async def call_llm(system_prompt: str, user_message: str) -> str:
@@ -198,7 +206,11 @@ async def call_llm(system_prompt: str, user_message: str) -> str:
                 }
             )
             response.raise_for_status()
-            return response.json()["choices"][0]["message"]["content"]
+            data = response.json()
+            choices = data.get("choices")
+            if not choices:
+                raise HTTPException(status_code=502, detail="Invalid LLM response: no choices")
+            return choices[0]["message"]["content"]
     except httpx.HTTPError as e:
         raise HTTPException(status_code=503, detail=f"LLM service unavailable: {str(e)}")
 
@@ -220,7 +232,7 @@ async def chat(request: ChatRequest):
         )
     
     # Safety check 2: Enforce no-solution policy via system prompt
-    system_prompt = enforce_no_solution_policy(request.message)
+    system_prompt = build_system_prompt(request.grade_level)
     
     # Call LLM
     response_text = await call_llm(system_prompt, request.message)

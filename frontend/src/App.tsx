@@ -200,6 +200,7 @@ function App() {
                   <button
                     type="submit"
                     disabled={isLoading || !message.trim()}
+                    aria-label="Invia"
                     className="p-3 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl text-white disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90 transition-all"
                   >
                     <Send className="w-5 h-5" />

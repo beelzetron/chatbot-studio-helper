@@ -20,8 +20,9 @@ AI chatbot per l'aiuto allo studio che fornisce spiegazioni ed esempi, **MAI sol
 ## Stack Tecnologico
 
 - **Backend**: Python 3.12 + FastAPI
+- **Frontend**: React + Vite + Tailwind CSS
 - **LLM**: Compatibile OpenAI API (endpoint locale)
-- **Container**: Docker
+- **Container**: Docker (backend + frontend/nginx)
 - **Orchestrazione**: OpenShift
 - **CI/CD**: GitLab CI
 
@@ -30,11 +31,16 @@ AI chatbot per l'aiuto allo studio che fornisce spiegazioni ed esempi, **MAI sol
 ```
 chatbot-studio-helper/
 ├── src/
-│   └── main.py          # Chatbot con guardrail
+│   └── main.py              # Chatbot con guardrail
 ├── tests/
 │   └── test_guardrails.py
+├── frontend/
+│   ├── src/                 # React UI
+│   ├── nginx.conf           # Proxy /api → backend
+│   └── Dockerfile
 ├── k8s/
-│   └── deployment.yaml  # Manifest OpenShift
+│   ├── deployment.yaml      # Backend manifest
+│   └── frontend-deployment.yaml
 ├── Dockerfile
 ├── requirements.txt
 ├── .gitlab-ci.yml
@@ -52,8 +58,11 @@ oc apply -f k8s/ -n homework-bot
 
 # Check status
 oc get pods -n homework-bot
+oc get route study-helper-frontend -n homework-bot
 oc get route study-helper-chatbot -n homework-bot
 ```
+
+Il frontend nginx fa proxy di `/api/*` verso il backend, rimuovendo il prefisso `/api`.
 
 ## API Endpoints
 
@@ -79,11 +88,26 @@ Service information and guardrails documentation.
 | LLM_ENDPOINT | http://192.168.11.36:8000/v1 | LLM API endpoint |
 | LLM_MODEL | local-model | Model name to use |
 
+## Sviluppo Locale
+
+```bash
+# Backend
+pip install -r requirements.txt
+PYTHONPATH=. uvicorn src.main:app --host 0.0.0.0 --port 8080
+
+# Frontend (proxy /api → localhost:8080)
+cd frontend && npm install && npm run dev
+```
+
 ## Testing
 
 ```bash
-pip install pytest pytest-asyncio
-pytest tests/ -v
+# Backend
+pip install -r requirements.txt pytest pytest-asyncio
+PYTHONPATH=. pytest tests/ -v
+
+# Frontend
+cd frontend && npm ci && npm run test -- --run
 ```
 
 ## Sicurezza
