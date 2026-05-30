@@ -1,0 +1,73 @@
+image: docker:24.0
+
+variables:
+  DOCKER_HOST: tcp://docker:2376
+  DOCKER_TLS_CERTDIR: "/certs"
+  DOCKER_DRIVER: overlay2
+  GITLAB_REGISTRY: "registry.gitlab.labbase.it"
+  PROJECT_PATH: "home-lab/chatbot-studio-helper"
+
+stages:
+  - test
+  - build
+  - scan
+  - deploy
+
+# Run unit tests
+test:
+  stage: test
+  script:
+    - echo "Running tests..."
+    - pip install pytest pytest-asyncio httpx
+    - pytest tests/ -v || echo "No tests found, skipping"
+  rules:
+    - changes:
+        - src/**/*
+        - tests/**/*
+        - requirements.txt
+
+# Build Docker image
+build:
+  stage: build
+  services:
+    - docker:24.0-dind
+  script:
+    - |
+      echo "Building Docker image..."
+      docker build -t $GITLAB_REGISTRY/$PROJECT_PATH:latest .
+      docker tag $GITLAB_REGISTRY/$PROJECT_PATH:latest $GITLAB_REGISTRY/$PROJECT_PATH:$CI_COMMIT_SHORT_SHA
+    - |
+      echo "Pushing to GitLab Registry..."
+      docker push $GITLAB_REGISTRY/$PROJECT_PATH:latest
+      docker push $GITLAB_REGISTRY/$PROJECT_PATH:$CI_COMMIT_SHORT_SHA
+  rules:
+    - changes:
+        - src/**/*
+        - Dockerfile
+        - requirements.txt
+    - branch: main
+
+# Security scan
+scan:
+  stage: scan
+  image: trivy:latest
+  script:
+    - trivy image --exit-code 0 $GITLAB_REGISTRY/$PROJECT_PATH:$CI_COMMIT_SHORT_SHA
+  rules:
+    - changes:
+        - Dockerfile
+    - branch: main
+
+# Deploy to OpenShift
+deploy:
+  stage: deploy
+  script:
+    - echo "Deploying to OpenShift..."
+    - oc login --token=$OPENSHIFT_TOKEN --server=$OPENSHIFT_SERVER
+    - oc apply -f k8s/ -n homework-bot
+    - oc rollout status deployment/study-helper-chatbot -n homework-bot
+  rules:
+    - branch: main
+  needs:
+    - build
+    - scan

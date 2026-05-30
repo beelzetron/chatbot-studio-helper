@@ -1,0 +1,94 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: homework-bot
+  labels:
+    app: study-helper
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: study-helper-config
+  namespace: homework-bot
+data:
+  LLM_ENDPOINT: "http://192.168.11.36:8000/v1"
+  LLM_MODEL: "local-model"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: study-helper-chatbot
+  namespace: homework-bot
+  labels:
+    app: study-helper-chatbot
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: study-helper-chatbot
+  template:
+    metadata:
+      labels:
+        app: study-helper-chatbot
+    spec:
+      containers:
+      - name: chatbot
+        image: registry.gitlab.labbase.it/home-lab/chatbot-studio-helper:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        envFrom:
+        - configMapRef:
+            name: study-helper-config
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: study-helper-chatbot
+  namespace: homework-bot
+spec:
+  selector:
+    app: study-helper-chatbot
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  type: ClusterIP
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: study-helper-chatbot
+  namespace: homework-bot
+spec:
+  to:
+    kind: Service
+    name: study-helper-chatbot
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
