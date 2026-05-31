@@ -1,7 +1,9 @@
+export type GradeLevel = 'primary' | 'middle' | 'secondary';
+
 export interface ChatRequest {
   message: string;
   subject?: string;
-  grade_level?: 'primary' | 'secondary';
+  grade_level?: GradeLevel;
   images?: File[];
 }
 
@@ -23,8 +25,19 @@ export interface Message {
   content: string;
   timestamp: Date;
   isWarning?: boolean;
+  isStreaming?: boolean;
   attachments?: MessageAttachment[];
 }
+
+export type ChatStreamEvent =
+  | { type: 'token'; content: string }
+  | {
+      type: 'done';
+      is_helpful: boolean;
+      safety_violation?: boolean;
+      violation_reason?: string;
+    }
+  | { type: 'error'; detail: string };
 
 export interface AttachmentPreview {
   id: string;
@@ -42,6 +55,12 @@ export const MAX_IMAGE_COUNT = 3;
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 export const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
+export const GRADE_LEVELS: { value: GradeLevel; label: string }[] = [
+  { value: 'primary', label: 'Scuole elementari' },
+  { value: 'middle', label: 'Scuole medie' },
+  { value: 'secondary', label: 'Scuole superiori' },
+];
+
 export const SCHOOL_SUBJECTS: Subject[] = [
   { name: 'Matematica', icon: 'calculator', description: 'Algebra, geometria, calcolo' },
   { name: 'Italiano', icon: 'book', description: 'Grammatica, letteratura, scrittura' },
@@ -49,6 +68,7 @@ export const SCHOOL_SUBJECTS: Subject[] = [
   { name: 'Scienze', icon: 'flask', description: 'Biologia, chimica, fisica' },
   { name: 'Geografia', icon: 'globe', description: 'Geografia italiana e mondiale' },
   { name: 'Inglese', icon: 'languages', description: 'Grammatica e conversazione' },
+  { name: 'Francese', icon: 'languages', description: 'Grammatica e conversazione' },
   { name: 'Arte', icon: 'palette', description: 'Storia dellarte, tecniche artistiche' },
   { name: 'Musica', icon: 'music', description: 'Teoria musicale, storia della musica' },
   { name: 'Educazione Fisica', icon: 'activity', description: 'Sport, salute, benessere' },

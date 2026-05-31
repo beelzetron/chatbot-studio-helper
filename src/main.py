@@ -5,9 +5,11 @@ Guardrail implementati per prevenire utilizzi impropri.
 """
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import Optional
+from typing import AsyncIterator, Optional
 import httpx
+import json
 import re
 import os
 
@@ -173,9 +175,20 @@ def build_system_prompt(
     """
     grade_context = ""
     if grade_level == "primary":
-        grade_context = "The student is in primary school. Use simple language and age-appropriate examples.\n"
+        grade_context = (
+            "The student is in primary school (scuola elementare, ages 6-11). "
+            "Use simple language and age-appropriate examples.\n"
+        )
+    elif grade_level == "middle":
+        grade_context = (
+            "The student is in middle school (scuola media, ages 11-14). "
+            "Use clear language with intermediate terminology.\n"
+        )
     elif grade_level == "secondary":
-        grade_context = "The student is in secondary school. You can use more advanced terminology.\n"
+        grade_context = (
+            "The student is in secondary school (scuola superiore, ages 14-19). "
+            "You can use more advanced terminology.\n"
+        )
 
     vision_context = ""
     if has_images:
@@ -223,6 +236,77 @@ def build_user_content(user_message: str, images: list[ProcessedImage]) -> str |
     return content
 
 
+def build_llm_payload(
+    system_prompt: str,
+    user_message: str,
+    images: Optional[list[ProcessedImage]] = None,
+    *,
+    stream: bool = False,
+) -> dict:
+    user_content = build_user_content(user_message, images or [])
+    payload = {
+        "model": LLM_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+        "temperature": 0.7,
+        "max_tokens": 1000,
+        "chat_template_kwargs": {"enable_thinking": False},
+    }
+    if stream:
+        payload["stream"] = True
+    return payload
+
+
+SAFETY_VIOLATION_MESSAGE = (
+    "Mi dispiace, ma posso aiutarti solo con domande relative allo studio e ai compiti scolastici. "
+    "Posso spiegarti concetti, fare esempi e guidarti nel ragionamento, "
+    "ma non posso svolgere i compiti al posto tuo."
+)
+
+
+def sse_event(payload: dict) -> str:
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+async def stream_llm(
+    system_prompt: str,
+    user_message: str,
+    images: Optional[list[ProcessedImage]] = None,
+) -> AsyncIterator[str]:
+    """Stream text tokens from the local OpenAI-compatible LLM."""
+    payload = build_llm_payload(system_prompt, user_message, images, stream=True)
+
+    try:
+        async with httpx.AsyncClient(timeout=LLM_TIMEOUT) as client:
+            async with client.stream(
+                "POST",
+                f"{LLM_ENDPOINT}/chat/completions",
+                json=payload,
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    data = line[6:].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    choices = chunk.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta") or {}
+                    content = delta.get("content")
+                    if content:
+                        yield content
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=503, detail=f"LLM service unavailable: {str(e)}")
+
+
 async def call_llm(
     system_prompt: str,
     user_message: str,
@@ -231,21 +315,11 @@ async def call_llm(
     """
     Chiamata all'LLM locale via API compatibile OpenAI.
     """
-    user_content = build_user_content(user_message, images or [])
-
     try:
         async with httpx.AsyncClient(timeout=LLM_TIMEOUT) as client:
             response = await client.post(
                 f"{LLM_ENDPOINT}/chat/completions",
-                json={
-                    "model": LLM_MODEL,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_content},
-                    ],
-                    "temperature": 0.7,
-                    "max_tokens": 1000,
-                },
+                json=build_llm_payload(system_prompt, user_message, images),
             )
             response.raise_for_status()
             data = response.json()
@@ -255,6 +329,25 @@ async def call_llm(
             return choices[0]["message"]["content"]
     except httpx.HTTPError as e:
         raise HTTPException(status_code=503, detail=f"LLM service unavailable: {str(e)}")
+
+
+async def prepare_chat_request(
+    message: str,
+    subject: Optional[str],
+    images: list[UploadFile],
+) -> tuple[str, bool, list[ProcessedImage], tuple[bool, str]]:
+    processed_images = await validate_and_process_images(images)
+    has_images = len(processed_images) > 0
+
+    user_message = message.strip()
+    if not user_message and has_images:
+        user_message = DEFAULT_IMAGE_MESSAGE
+
+    if not user_message and not has_images:
+        raise HTTPException(status_code=400, detail="Messaggio o immagine richiesti")
+
+    is_valid, reason = check_school_context(user_message, subject, has_images=has_images)
+    return user_message, has_images, processed_images, (is_valid, reason)
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -267,32 +360,69 @@ async def chat(
     """
     Main chat endpoint with safety guardrails. Accepts multipart form data with optional images.
     """
-    processed_images = await validate_and_process_images(images)
-    has_images = len(processed_images) > 0
+    user_message, has_images, processed_images, (is_valid, reason) = await prepare_chat_request(
+        message, subject, images
+    )
 
-    user_message = message.strip()
-    if not user_message and has_images:
-        user_message = DEFAULT_IMAGE_MESSAGE
-
-    if not user_message and not has_images:
-        raise HTTPException(status_code=400, detail="Messaggio o immagine richiesti")
-
-    is_valid, reason = check_school_context(user_message, subject, has_images=has_images)
-    
     if not is_valid:
         return ChatResponse(
-            response="Mi dispiace, ma posso aiutarti solo con domande relative allo studio e ai compiti scolastici. Posso spiegarti concetti, fare esempi e guidarti nel ragionamento, ma non posso svolgere i compiti al posto tuo.",
+            response=SAFETY_VIOLATION_MESSAGE,
             is_helpful=False,
             safety_violation=True,
             violation_reason=reason,
         )
-    
+
     system_prompt = build_system_prompt(grade_level, has_images=has_images)
     response_text = await call_llm(system_prompt, user_message, processed_images)
-    
+
     return ChatResponse(
         response=response_text,
         is_helpful=True,
+    )
+
+
+@app.post("/chat/stream")
+async def chat_stream(
+    message: str = Form(""),
+    subject: Optional[str] = Form(None),
+    grade_level: Optional[str] = Form(None),
+    images: list[UploadFile] = File(default=[]),
+):
+    """Stream chat response tokens via Server-Sent Events."""
+    user_message, has_images, processed_images, (is_valid, reason) = await prepare_chat_request(
+        message, subject, images
+    )
+
+    async def event_generator() -> AsyncIterator[str]:
+        if not is_valid:
+            yield sse_event({"type": "token", "content": SAFETY_VIOLATION_MESSAGE})
+            yield sse_event({
+                "type": "done",
+                "is_helpful": False,
+                "safety_violation": True,
+                "violation_reason": reason,
+            })
+            return
+
+        system_prompt = build_system_prompt(grade_level, has_images=has_images)
+        try:
+            async for token in stream_llm(system_prompt, user_message, processed_images):
+                yield sse_event({"type": "token", "content": token})
+            yield sse_event({"type": "done", "is_helpful": True})
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+            yield sse_event({"type": "error", "detail": detail})
+        except httpx.HTTPError as exc:
+            yield sse_event({"type": "error", "detail": f"LLM service unavailable: {str(exc)}"})
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 
@@ -312,7 +442,7 @@ async def info():
         "guardrails": [
             "No complete homework solutions",
             "School context only",
-            "Primary and secondary education subjects",
+            "Primary, middle, and secondary education subjects",
             "Explanations and examples only",
             "Homework images processed in memory only, never stored",
         ],

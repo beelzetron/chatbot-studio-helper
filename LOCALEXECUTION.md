@@ -29,11 +29,26 @@ docker build -t study-helper-backend .
 docker build -t study-helper-frontend ./frontend
 ```
 
+### Rete Condivisa
+
+Il frontend nginx fa proxy verso il backend usando `BACKEND_HOST` e `BACKEND_PORT`. I container devono potersi raggiungere a vicenda: crea una rete condivisa (una sola volta):
+
+```bash
+podman network create chatbot-net
+```
+
+Con Docker:
+
+```bash
+docker network create chatbot-net
+```
+
 ### Avviare il Backend
 
 ```bash
 podman run -d \
   --name chatbot-backend \
+  --network chatbot-net \
   -p 8080:8080 \
   -e LLM_ENDPOINT=http://192.168.11.36:8000/v1 \
   -e LLM_MODEL=local-model \
@@ -46,18 +61,39 @@ podman run -d \
 
 ### Avviare il Frontend
 
+Il frontend genera la configurazione nginx da `nginx.conf.template` sostituendo `BACKEND_HOST` e `BACKEND_PORT`. Entrambe le variabili sono obbligatorie.
+
+**Rete condivisa** (consigliato su Linux; funziona anche su macOS):
+
+```bash
+podman run -d \
+  --name chatbot-frontend \
+  --network chatbot-net \
+  -p 3000:8080 \
+  -e BACKEND_HOST=chatbot-backend \
+  -e BACKEND_PORT=8080 \
+  study-helper-frontend
+```
+
+**Alternativa su macOS (Podman/Docker Desktop)** — senza rete condivisa, il frontend raggiunge il backend tramite la porta pubblicata sull'host:
+
 ```bash
 podman run -d \
   --name chatbot-frontend \
   -p 3000:8080 \
+  -e BACKEND_HOST=host.containers.internal \
+  -e BACKEND_PORT=8080 \
   study-helper-frontend
 ```
+
+> Su Linux con Podman, se `host.containers.internal` non è disponibile, usa `--network chatbot-net` come sopra oppure aggiungi `--add-host=host.containers.internal:host-gateway` al comando `podman run`.
 
 ### Accesso
 
 - **Frontend**: http://localhost:3000
 - **Backend API**: http://localhost:8080
-- **Health Check**: http://localhost:8080/health
+- **Health Check (backend)**: http://localhost:8080/health
+- **Health Check (via frontend proxy)**: http://localhost:3000/api/health
 
 ## Opzione 2: Esecuzione con Docker Compose
 
@@ -92,19 +128,24 @@ services:
     container_name: chatbot-frontend
     ports:
       - "3000:8080"
+    environment:
+      - BACKEND_HOST=backend
+      - BACKEND_PORT=8080
     depends_on:
       - backend
     restart: unless-stopped
 ```
 
+> In Compose i servizi si raggiungono per **nome del servizio** (`backend`), non per `container_name`.
+
 ### Avviare tutti i servizi
 
 ```bash
-# Con Podman
+# Con Podman (richiede podman-compose)
 podman-compose up -d
 
 # Oppure con Docker
-docker-compose up -d
+docker compose up -d
 ```
 
 ### Fermare i servizi
@@ -114,7 +155,7 @@ docker-compose up -d
 podman-compose down
 
 # Oppure con Docker
-docker-compose down
+docker compose down
 ```
 
 ## Verifica del Funzionamento
@@ -123,6 +164,7 @@ docker-compose down
 
 ```bash
 curl http://localhost:8080/health
+curl http://localhost:3000/api/health
 ```
 
 ### Test API Chat
@@ -136,15 +178,19 @@ curl -X POST http://localhost:8080/chat \
 
 ### Test con Immagine
 
+Sostituisci `percorso/alla/tua-immagine.jpg` con un file JPEG o PNG locale:
+
 ```bash
 curl -X POST http://localhost:8080/chat \
   -F "message=Spiegami questo esercizio" \
   -F "subject=matematica" \
   -F "grade_level=secondary" \
-  -F "images=@homework.jpg"
+  -F "images=@percorso/alla/tua-immagine.jpg"
 ```
 
 ## Environment Variables
+
+### Backend
 
 | Variabile | Default | Descrizione |
 |-----------|---------|-------------|
@@ -154,6 +200,13 @@ curl -X POST http://localhost:8080/chat \
 | `MAX_IMAGE_COUNT` | 3 | Numero massimo di immagini per messaggio |
 | `MAX_IMAGE_BYTES` | 5242880 | Massimo byte per immagine (5 MB) |
 | `MAX_IMAGE_DIMENSION` | 2048 | Massimo width/height in pixel |
+
+### Frontend
+
+| Variabile | Default | Descrizione |
+|-----------|---------|-------------|
+| `BACKEND_HOST` | *(obbligatorio)* | Hostname del backend (es. `chatbot-backend`, `backend`, `host.containers.internal`) |
+| `BACKEND_PORT` | *(obbligatorio)* | Porta del backend (es. `8080`) |
 
 ## Rimuovere i Container
 
@@ -179,12 +232,14 @@ docker rmi study-helper-backend study-helper-frontend
 
 ## Note Importanti
 
-1. **Endpoint LLM**: Il chatbot richiede un endpoint LLM funzionante. Modifica `LLM_ENDPOINT` secondo la tua configurazione.
+1. **Endpoint LLM**: Il chatbot richiede un endpoint LLM funzionante. Modifica `LLM_ENDPOINT` secondo la tua configurazione. Se l'endpoint non è raggiungibile, `/health` risponde comunque OK ma `/chat` restituisce un errore di servizio LLM.
 
-2. **Port Mapping**: Il frontend usa la porta 8080 internamente, quindi mappalo su una porta diversa (es. 3000) per evitare conflitti.
+2. **Proxy frontend**: Il frontend espone l'API sotto `/api/*` e inoltra le richieste al backend. Senza `BACKEND_HOST` e `BACKEND_PORT` nginx non si avvia.
 
-3. **Sicurezza**: I container UBI 9 python-312 e nginx-124 eseguono il processo come utente non-root (UID 1001).
+3. **Port Mapping**: Il frontend usa la porta 8080 internamente, quindi mappalo su una porta diversa (es. 3000) per evitare conflitti con il backend.
 
-4. **Immagini**: Le immagini caricate vengono elaborate in memoria e **non vengono salvate** sul server.
+4. **Sicurezza**: I container UBI 9 python-312 e nginx-124 eseguono il processo come utente non-root (UID 1001).
 
-5. **Podman vs Docker**: Podman è consigliato su macOS/Linux per non richiedere un daemon in background.
+5. **Immagini**: Le immagini caricate vengono elaborate in memoria e **non vengono salvate** sul server.
+
+6. **Podman vs Docker**: Podman è consigliato su macOS/Linux per non richiedere un daemon in background. Per Compose con Podman installa `podman-compose` oppure usa `docker compose`.

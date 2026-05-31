@@ -14,7 +14,7 @@ FROM registry.access.redhat.com/ubi9/nginx-124:latest
 USER root
 
 COPY --from=builder --chown=1001:0 /app/dist /opt/app-root/src
-COPY --chown=1001:0 nginx.conf /opt/app-root/etc/nginx.d/app.conf
+COPY --chown=1001:0 nginx.conf.template /opt/app-root/etc/nginx.d/app.conf.template
 
 RUN chown -R 1001:0 /opt/app-root && \
     chmod -R g+rwX /opt/app-root
@@ -23,4 +23,4 @@ USER 1001
 
 EXPOSE 8080
 
-CMD ["/usr/libexec/s2i/run"]
+CMD ["/bin/sh", "-c", "envsubst '${BACKEND_HOST} ${BACKEND_PORT}' < /opt/app-root/etc/nginx.d/app.conf.template > /opt/app-root/etc/nginx.d/app.conf && /usr/libexec/s2i/run"]

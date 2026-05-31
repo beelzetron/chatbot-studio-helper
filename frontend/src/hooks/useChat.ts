@@ -2,6 +2,9 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { chatApi } from '../api/chatApi';
 import type { ChatRequest, ChatResponse, Message, MessageAttachment } from '../types/chat';
 
+const CONNECTION_ERROR =
+  'Mi dispiace, ma ho avuto un problema di connessione. Per favore riprova.';
+
 export function useChat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -35,50 +38,97 @@ export function useChat() {
       return { previewUrl, name: file.name };
     });
 
+    const userMessage: Message = {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: request.message,
+      timestamp: new Date(),
+      attachments: messageAttachments.length > 0 ? messageAttachments : undefined,
+    };
+
+    const assistantId = crypto.randomUUID();
+    const assistantMessage: Message = {
+      id: assistantId,
+      role: 'assistant',
+      content: '',
+      timestamp: new Date(),
+      isStreaming: true,
+    };
+
+    setMessages((prev) => [...prev, userMessage, assistantMessage]);
+
+    let streamedContent = '';
+    let finalResponse: ChatResponse = {
+      response: '',
+      is_helpful: true,
+    };
+
     try {
-      const userMessage: Message = {
-        id: crypto.randomUUID(),
-        role: 'user',
-        content: request.message,
-        timestamp: new Date(),
-        attachments: messageAttachments.length > 0 ? messageAttachments : undefined,
-      };
+      await chatApi.sendMessageStream(request, (event) => {
+        if (event.type === 'token') {
+          streamedContent += event.content;
+          setMessages((prev) =>
+            prev.map((message) =>
+              message.id === assistantId
+                ? { ...message, content: streamedContent }
+                : message,
+            ),
+          );
+          return;
+        }
 
-      setMessages(prev => [...prev, userMessage]);
+        if (event.type === 'done') {
+          finalResponse = {
+            response: streamedContent,
+            is_helpful: event.is_helpful,
+            safety_violation: event.safety_violation,
+            violation_reason: event.violation_reason,
+          };
+          setMessages((prev) =>
+            prev.map((message) =>
+              message.id === assistantId
+                ? {
+                    ...message,
+                    content: streamedContent,
+                    isStreaming: false,
+                    isWarning: event.safety_violation,
+                  }
+                : message,
+            ),
+          );
+          return;
+        }
 
-      const response = await chatApi.sendMessage(request);
-      
-      const assistantMessage: Message = {
-        id: crypto.randomUUID(),
-        role: 'assistant',
-        content: response.response,
-        timestamp: new Date(),
-        isWarning: response.safety_violation,
-      };
+        if (event.type === 'error') {
+          throw new Error(event.detail);
+        }
+      });
 
-      setMessages(prev => [...prev, assistantMessage]);
-      
-      return response;
+      return finalResponse;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Errore sconosciuto';
       setError(errorMessage);
-      
+
       const errorResponse: ChatResponse = {
-        response: 'Mi dispiace, ma ho avuto un problema di connessione. Per favore riprova.',
+        response: CONNECTION_ERROR,
         is_helpful: false,
         safety_violation: true,
         violation_reason: errorMessage,
       };
 
-      const errorAssistantMessage: Message = {
-        id: crypto.randomUUID(),
-        role: 'assistant',
-        content: errorResponse.response,
-        timestamp: new Date(),
-        isWarning: true,
-      };
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id === assistantId
+            ? {
+                ...message,
+                content: CONNECTION_ERROR,
+                isStreaming: false,
+                isWarning: true,
+              }
+            : message,
+        ),
+      );
 
-      setMessages(prev => [...prev, errorAssistantMessage]);
       return errorResponse;
     } finally {
       setIsLoading(false);

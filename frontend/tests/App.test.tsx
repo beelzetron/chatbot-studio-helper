@@ -5,11 +5,18 @@ import { chatApi } from '../src/api/chatApi';
 
 vi.mock('../src/api/chatApi', () => ({
   chatApi: {
-    sendMessage: vi.fn(),
+    sendMessageStream: vi.fn(),
   },
 }));
 
 const mockedChatApi = vi.mocked(chatApi);
+
+function mockStreamResponse(response: string, isHelpful = true): void {
+  mockedChatApi.sendMessageStream.mockImplementation(async (_request, onEvent) => {
+    onEvent({ type: 'token', content: response });
+    onEvent({ type: 'done', is_helpful: isHelpful });
+  });
+}
 
 describe('App', () => {
   beforeEach(() => {
@@ -30,7 +37,8 @@ describe('App', () => {
   it('shows subject list', () => {
     render(<App />);
     expect(screen.getByText('Matematica')).toBeInTheDocument();
-    expect(screen.getByText('Italiano')).toBeInTheDocument();
+    expect(screen.getByText('Inglese')).toBeInTheDocument();
+    expect(screen.getByText('Francese')).toBeInTheDocument();
     expect(screen.getByText('Scienze')).toBeInTheDocument();
   });
 
@@ -55,11 +63,35 @@ describe('App', () => {
     expect(input).toHaveValue('Test message');
   });
 
-  it('submits message when pressing send button', async () => {
-    mockedChatApi.sendMessage.mockResolvedValue({
-      response: 'This is a test response',
-      is_helpful: true,
+  it('shows grade level selection', () => {
+    render(<App />);
+    expect(screen.getByText('Livello scolastico')).toBeInTheDocument();
+    expect(screen.getByText('Scuole elementari')).toBeInTheDocument();
+    expect(screen.getByText('Scuole medie')).toBeInTheDocument();
+    expect(screen.getByText('Scuole superiori')).toBeInTheDocument();
+  });
+
+  it('sends selected grade level with chat request', async () => {
+    mockStreamResponse('This is a test response');
+
+    render(<App />);
+
+    await fireEvent.click(screen.getByText('Scuole elementari'));
+
+    const input = screen.getByPlaceholderText('Chiedi spiegazioni o allega una foto...');
+    await fireEvent.change(input, { target: { value: 'Test question' } });
+    await fireEvent.click(screen.getByRole('button', { name: /invia/i }));
+
+    await waitFor(() => {
+      expect(mockedChatApi.sendMessageStream).toHaveBeenCalledWith(
+        expect.objectContaining({ grade_level: 'primary' }),
+        expect.any(Function),
+      );
     });
+  });
+
+  it('submits message when pressing send button', async () => {
+    mockStreamResponse('This is a test response');
 
     render(<App />);
     
@@ -70,15 +102,17 @@ describe('App', () => {
     await fireEvent.click(sendButton);
     
     await waitFor(() => {
-      expect(mockedChatApi.sendMessage).toHaveBeenCalledWith(
-        expect.objectContaining({ message: 'Test question' })
+      expect(mockedChatApi.sendMessageStream).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Test question' }),
+        expect.any(Function),
       );
     });
   });
 
   it('displays loading state while waiting for response', async () => {
-    const promise = new Promise(() => {});
-    mockedChatApi.sendMessage.mockReturnValue(promise as ReturnType<typeof chatApi.sendMessage>);
+    mockedChatApi.sendMessageStream.mockImplementation(
+      () => new Promise(() => {}),
+    );
 
     render(<App />);
     
@@ -94,7 +128,7 @@ describe('App', () => {
   });
 
   it('displays error message when API fails', async () => {
-    mockedChatApi.sendMessage.mockRejectedValue(new Error('Network error'));
+    mockedChatApi.sendMessageStream.mockRejectedValue(new Error('Network error'));
 
     render(<App />);
     
@@ -116,10 +150,7 @@ describe('App', () => {
   });
 
   it('enables send with image attachment only', async () => {
-    mockedChatApi.sendMessage.mockResolvedValue({
-      response: 'Help with your homework photo',
-      is_helpful: true,
-    });
+    mockStreamResponse('Help with your homework photo');
 
     render(<App />);
 
@@ -137,12 +168,29 @@ describe('App', () => {
     await fireEvent.click(sendButton);
 
     await waitFor(() => {
-      expect(mockedChatApi.sendMessage).toHaveBeenCalledWith(
+      expect(mockedChatApi.sendMessageStream).toHaveBeenCalledWith(
         expect.objectContaining({
           message: '',
           images: expect.arrayContaining([expect.any(File)]),
-        })
+        }),
+        expect.any(Function),
       );
+    });
+  });
+
+  it('renders markdown in assistant responses', async () => {
+    mockStreamResponse('### Titolo\n\nParagrafo con **grassetto** e formula $a^2 + b^2 = c^2$.');
+
+    render(<App />);
+
+    const input = screen.getByPlaceholderText('Chiedi spiegazioni o allega una foto...');
+    await fireEvent.change(input, { target: { value: 'Test question' } });
+    await fireEvent.click(screen.getByRole('button', { name: /invia/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { level: 3 })).toHaveTextContent('Titolo');
+      expect(screen.getByText('grassetto').tagName).toBe('STRONG');
+      expect(document.querySelector('.katex')).toBeInTheDocument();
     });
   });
 

@@ -127,6 +127,11 @@ class TestNoSolutionPolicy:
         prompt = build_system_prompt("secondary")
         assert "secondary school" in prompt
 
+    def test_system_prompt_middle_grade(self):
+        """System prompt should include middle grade context."""
+        prompt = build_system_prompt("middle")
+        assert "middle school" in prompt
+
 
 class TestSubjectList:
     """Test the list of supported school subjects."""

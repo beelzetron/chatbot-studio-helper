@@ -2,8 +2,9 @@ import { useState, useRef } from 'react';
 import {
   BookOpen, Send, Trash2, Info, AlertCircle, Calculator, Book, Clock,
   FlaskConical, Globe, Languages, Palette, Music, Activity, Cpu,
-  Paperclip, Camera, X,
+  Paperclip, Camera, X, GraduationCap,
 } from 'lucide-react';
+import { MarkdownContent } from './components/MarkdownContent';
 import { useChat } from './hooks/useChat';
 import {
   ALLOWED_IMAGE_TYPES,
@@ -11,6 +12,8 @@ import {
   MAX_IMAGE_COUNT,
   type AttachmentPreview,
   type ChatRequest,
+  type GradeLevel,
+  GRADE_LEVELS,
 } from './types/chat';
 
 const SUBJECTS = [
@@ -20,6 +23,7 @@ const SUBJECTS = [
   { name: 'Scienze', icon: FlaskConical, color: 'bg-purple-500' },
   { name: 'Geografia', icon: Globe, color: 'bg-teal-500' },
   { name: 'Inglese', icon: Languages, color: 'bg-indigo-500' },
+  { name: 'Francese', icon: Languages, color: 'bg-violet-500' },
   { name: 'Arte', icon: Palette, color: 'bg-pink-500' },
   { name: 'Musica', icon: Music, color: 'bg-rose-500' },
   { name: 'Educazione Fisica', icon: Activity, color: 'bg-orange-500' },
@@ -29,6 +33,7 @@ const SUBJECTS = [
 function App() {
   const [message, setMessage] = useState('');
   const [selectedSubject, setSelectedSubject] = useState<string>('');
+  const [selectedGradeLevel, setSelectedGradeLevel] = useState<GradeLevel>('primary');
   const [showInfo, setShowInfo] = useState(false);
   const [attachments, setAttachments] = useState<AttachmentPreview[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -98,7 +103,7 @@ function App() {
     const request: ChatRequest = {
       message: message.trim(),
       subject: selectedSubject || undefined,
-      grade_level: 'secondary',
+      grade_level: selectedGradeLevel,
       images: attachments.map((a) => a.file),
     };
 
@@ -149,7 +154,28 @@ function App() {
 
       <main className="max-w-6xl mx-auto px-4 py-6">
         <div className="grid lg:grid-cols-4 gap-6">
-          <aside className="lg:col-span-1">
+          <aside className="lg:col-span-1 space-y-4">
+            <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/20">
+              <h2 className="text-white font-semibold mb-4 flex items-center gap-2">
+                <GraduationCap className="w-5 h-5" />
+                Livello scolastico
+              </h2>
+              <div className="space-y-2">
+                {GRADE_LEVELS.map((level) => (
+                  <button
+                    key={level.value}
+                    onClick={() => setSelectedGradeLevel(level.value)}
+                    className={`w-full text-left px-3 py-2 rounded-lg transition-all ${
+                      selectedGradeLevel === level.value
+                        ? 'bg-white/20 text-white'
+                        : 'text-gray-300 hover:bg-white/10'
+                    }`}
+                  >
+                    {level.label}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/20">
               <h2 className="text-white font-semibold mb-4 flex items-center gap-2">
                 <Book className="w-5 h-5" />
@@ -190,9 +216,9 @@ function App() {
 
           <div className="lg:col-span-3">
             <div className="bg-white/10 backdrop-blur-md rounded-2xl border border-white/20 overflow-hidden">
-              <div className="h-[60vh] overflow-y-auto p-4 space-y-4">
+              <div className="h-[60vh] overflow-y-auto p-4 space-y-4 bg-white">
                 {messages.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-full text-center text-gray-400">
+                  <div className="flex flex-col items-center justify-center h-full text-center text-gray-500">
                     <BookOpen className="w-16 h-16 mb-4 opacity-50" />
                     <p className="text-lg font-medium">Benvenuto su Study Helper!</p>
                     <p className="text-sm mt-2 max-w-md">
@@ -213,12 +239,12 @@ function App() {
                           msg.role === 'user'
                             ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white'
                             : msg.isWarning
-                            ? 'bg-red-500/20 border border-red-500/50 text-red-200'
-                            : 'bg-white/10 text-white'
+                            ? 'bg-red-50 border border-red-200 text-red-800'
+                            : 'bg-gray-50 border border-gray-200 text-gray-900'
                         }`}
                       >
                         {msg.isWarning && (
-                          <div className="flex items-center gap-2 mb-2 text-red-400">
+                          <div className="flex items-center gap-2 mb-2 text-red-600">
                             <AlertCircle className="w-4 h-4" />
                             <span className="text-xs font-medium">Nota importante</span>
                           </div>
@@ -230,13 +256,29 @@ function App() {
                                 key={attachment.previewUrl}
                                 src={attachment.previewUrl}
                                 alt={attachment.name}
-                                className="h-24 w-24 object-cover rounded-lg border border-white/20"
+                                className="h-24 w-24 object-cover rounded-lg border border-gray-200"
                               />
                             ))}
                           </div>
                         )}
-                        {msg.content && (
-                          <p className="whitespace-pre-wrap">{msg.content}</p>
+                        {msg.role === 'assistant' ? (
+                          <div className="flex items-end gap-1">
+                            {msg.content ? (
+                              msg.isStreaming ? (
+                                <p className="whitespace-pre-wrap">{msg.content}</p>
+                              ) : (
+                                <MarkdownContent content={msg.content} />
+                              )
+                            ) : null}
+                            {msg.isStreaming && (
+                              <span
+                                className="inline-block w-2 h-4 shrink-0 bg-gray-400 animate-pulse rounded-sm mb-1"
+                                aria-hidden="true"
+                              />
+                            )}
+                          </div>
+                        ) : (
+                          msg.content && <p className="whitespace-pre-wrap">{msg.content}</p>
                         )}
                         <p className="text-xs mt-2 opacity-60">
                           {msg.timestamp.toLocaleTimeString('it-IT', {
@@ -247,17 +289,6 @@ function App() {
                       </div>
                     </div>
                   ))
-                )}
-                {isLoading && (
-                  <div className="flex justify-start animate-pulse-slow">
-                    <div className="bg-white/10 rounded-2xl px-4 py-3">
-                      <div className="flex gap-2">
-                        <div className="w-2 h-2 bg-white rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                        <div className="w-2 h-2 bg-white rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                        <div className="w-2 h-2 bg-white rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                      </div>
-                    </div>
-                  </div>
                 )}
               </div>
 
