@@ -15,13 +15,14 @@ stages:
 test-backend:
   stage: test
   script:
-    - pip install -r requirements.txt pytest pytest-asyncio
+    - pip install -r requirements.txt -r requirements-dev.txt
     - pytest tests/ -v
   rules:
     - changes:
         - src/**/*
         - tests/**/*
         - requirements.txt
+        - requirements-dev.txt
 
 # Frontend Tests
 test-frontend:
@@ -34,6 +35,26 @@ test-frontend:
   rules:
     - changes:
         - frontend/**/*
+
+# Code Quality
+code-quality:
+  stage: test
+  image: registry.access.redhat.com/ubi9/python-312:latest
+  script:
+    - pip install -r requirements.txt -r requirements-dev.txt
+    - pip-audit -r requirements.txt
+    - flake8 src/ tests/
+    - black --check src/
+    - isort --check-only src/
+    - mypy src/
+  rules:
+    - changes:
+        - src/**/*
+        - tests/**/*
+        - requirements.txt
+        - requirements-dev.txt
+        - .flake8
+        - mypy.ini
 
 # Build Backend Image (manual trigger)
 build-backend:

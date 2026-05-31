@@ -1,0 +1,9 @@
+# Development and security tools
+black==24.3.0
+flake8==7.1.1
+isort==5.13.2
+mypy==1.10.0
+pip-audit==2.10.0
+types-requests==2.31.0
+pytest==8.2.2
+pytest-asyncio==0.23.1
