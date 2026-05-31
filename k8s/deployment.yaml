@@ -12,7 +12,9 @@ metadata:
   name: study-helper-config
   namespace: homework-bot
 data:
-  LLM_ENDPOINT: "http://192.168.11.36:8000/v1"
+  # Override at deploy time, e.g. oc patch configmap study-helper-config -n homework-bot \
+  #   --type merge -p '{"data":{"LLM_ENDPOINT":"http://YOUR_LLM_HOST:8000/v1","LLM_MODEL":"your-model"}}'
+  LLM_ENDPOINT: "http://your-llm-host:8000/v1"
   LLM_MODEL: "local-model"
   LLM_TIMEOUT: "60"
   MAX_IMAGE_COUNT: "3"
@@ -37,7 +39,7 @@ spec:
     spec:
       containers:
       - name: chatbot
-        image: registry.gitlab.labbase.it/home-lab/chatbot-studio-helper:latest
+        image: ghcr.io/beelzetron/chatbot-studio-helper-backend:latest
         imagePullPolicy: Always
         ports:
         - containerPort: 8080

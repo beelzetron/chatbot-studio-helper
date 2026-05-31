@@ -50,7 +50,7 @@ podman run -d \
   --name chatbot-backend \
   --network chatbot-net \
   -p 8080:8080 \
-  -e LLM_ENDPOINT=http://192.168.11.36:8000/v1 \
+  -e LLM_ENDPOINT=http://localhost:8000/v1 \
   -e LLM_MODEL=local-model \
   -e LLM_TIMEOUT=60 \
   -e MAX_IMAGE_COUNT=3 \
@@ -109,7 +109,7 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - LLM_ENDPOINT=http://192.168.11.36:8000/v1
+      - LLM_ENDPOINT=http://localhost:8000/v1
       - LLM_MODEL=local-model
       - LLM_TIMEOUT=60
       - MAX_IMAGE_COUNT=3
@@ -194,7 +194,7 @@ curl -X POST http://localhost:8080/chat \
 
 | Variabile | Default | Descrizione |
 |-----------|---------|-------------|
-| `LLM_ENDPOINT` | http://192.168.11.36:8000/v1 | Endpoint API LLM |
+| `LLM_ENDPOINT` | http://localhost:8000/v1 | Endpoint API LLM |
 | `LLM_MODEL` | local-model | Nome del modello da usare |
 | `LLM_TIMEOUT` | 60 | Timeout in secondi per le richieste LLM |
 | `MAX_IMAGE_COUNT` | 3 | Numero massimo di immagini per messaggio |

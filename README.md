@@ -25,7 +25,7 @@ AI chatbot per l'aiuto allo studio che fornisce spiegazioni ed esempi, **MAI sol
 - **LLM**: Compatibile OpenAI API (endpoint locale)
 - **Container**: Red Hat UBI 9 (`python-312`, `nodejs-20`, `nginx-124`)
 - **Orchestrazione**: OpenShift
-- **CI/CD**: GitLab CI
+- **CI/CD**: GitHub Actions → GHCR
 
 ## Struttura del Progetto
 
@@ -39,16 +39,49 @@ chatbot-studio-helper/
 │   └── test_attachments.py
 ├── frontend/
 │   ├── src/                 # React UI
-│   ├── nginx.conf           # Proxy /api → backend
+│   ├── nginx.conf.template  # Proxy /api → backend (envsubst)
 │   └── Dockerfile
 ├── k8s/
 │   ├── deployment.yaml      # Backend manifest
 │   └── frontend-deployment.yaml
+├── .github/workflows/
+│   ├── test.yml             # Reusable test jobs
+│   ├── ci.yml               # PR/push to main
+│   └── release.yml          # v* tags → semver images + GitHub Release
 ├── Dockerfile
 ├── requirements.txt
-├── .gitlab-ci.yml
+├── .env.example
 └── README.md
 ```
+
+## CI/CD
+
+GitHub Actions runs on every PR and push to `main`:
+
+| Job | Description |
+|-----|-------------|
+| `lint-internal` | Fails if private IPs or internal registry domains appear in source |
+| `test-backend` | pytest |
+| `test-frontend` | vitest |
+| `code-quality` | pip-audit, flake8, black, isort, mypy |
+
+On push to `main`, after tests pass, images are published to GHCR:
+
+| Image | Tags |
+|-------|------|
+| `ghcr.io/beelzetron/chatbot-studio-helper-backend` | `latest`, commit SHA |
+| `ghcr.io/beelzetron/chatbot-studio-helper-frontend` | `latest`, commit SHA |
+
+### Release
+
+Cut a release by pushing a semver tag:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The release workflow runs tests, publishes semver tags (`1.0.0`, `1.0`, `1`, `latest`) to GHCR, and creates a GitHub Release with auto-generated notes.
 
 ## Deployment su OpenShift
 
@@ -59,6 +92,10 @@ oc login --token=<TOKEN> --server=<SERVER>
 # Apply manifests
 oc apply -f k8s/ -n homework-bot
 
+# Override LLM config (manifests use placeholders only)
+oc patch configmap study-helper-config -n homework-bot \
+  --type merge -p '{"data":{"LLM_ENDPOINT":"http://YOUR_LLM_HOST:8000/v1","LLM_MODEL":"your-model"}}'
+
 # Check status
 oc get pods -n homework-bot
 oc get route study-helper-frontend -n homework-bot
@@ -66,6 +103,24 @@ oc get route study-helper-chatbot -n homework-bot
 ```
 
 Il frontend nginx fa proxy di `/api/*` verso il backend, rimuovendo il prefisso `/api`.
+
+### GHCR pull access
+
+GHCR packages are private by default. Either make both packages public (Settings → Package → Change visibility), or create a pull secret:
+
+```bash
+kubectl create secret docker-registry ghcr-pull \
+  --docker-server=ghcr.io \
+  --docker-username=<github-user> \
+  --docker-password=<PAT with read:packages> \
+  -n homework-bot
+```
+
+Then add `imagePullSecrets: [{ name: ghcr-pull }]` to both Deployments, or use a ServiceAccount.
+
+For reproducible deploys, pin images to a release tag (e.g. `ghcr.io/beelzetron/chatbot-studio-helper-backend:1.0.0`) instead of `latest`.
+
+Copy `.env.example` to `.env` for local development; never commit real LLM endpoints.
 
 ## API Endpoints
 
@@ -109,12 +164,14 @@ Service information and guardrails documentation.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| LLM_ENDPOINT | http://192.168.11.36:8000/v1 | LLM API endpoint |
+| LLM_ENDPOINT | http://localhost:8000/v1 | LLM API endpoint |
 | LLM_MODEL | local-model | Model name to use (must support vision for image uploads) |
 | LLM_TIMEOUT | 60 | Timeout in seconds for LLM requests |
 | MAX_IMAGE_COUNT | 3 | Max images per chat message |
 | MAX_IMAGE_BYTES | 5242880 | Max bytes per image (5 MB) |
 | MAX_IMAGE_DIMENSION | 2048 | Max width/height in pixels (downscaled if larger) |
+
+See [`.env.example`](.env.example) for a local template.
 
 ## Container Images (UBI 9)
 
@@ -138,7 +195,7 @@ podman run --rm -p 8080:8080 study-helper-backend
 podman run --rm -p 8080:8080 study-helper-frontend
 ```
 
-CI test jobs use the same UBI base images. Build jobs pull UBI layers from `registry.access.redhat.com` (no subscription required for UBI).
+CI build jobs use `docker/build-push-action` with UBI base images from `registry.access.redhat.com`.
 
 ## Sviluppo Locale
 
@@ -150,6 +207,8 @@ PYTHONPATH=. uvicorn src.main:app --host 0.0.0.0 --port 8080
 # Frontend (proxy /api → localhost:8080)
 cd frontend && npm install && npm run dev
 ```
+
+See [LOCALEXECUTION.md](LOCALEXECUTION.md) for Podman/Docker container runs.
 
 ## Testing
 

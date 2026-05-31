@@ -23,7 +23,7 @@ app = FastAPI(
 )
 
 # Configuration
-LLM_ENDPOINT = os.getenv("LLM_ENDPOINT", "http://192.168.11.36:8000/v1")
+LLM_ENDPOINT = os.getenv("LLM_ENDPOINT", "http://localhost:8000/v1")
 LLM_MODEL = os.getenv("LLM_MODEL", "local-model")
 LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "60"))
 

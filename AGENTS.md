@@ -19,8 +19,16 @@
 - Keep lines ≤120 chars; ignore E203/W503
 
 ## CI Pipeline
-- All checks (`test-backend`, `test-frontend`, `code-quality`) run **in parallel** in the `test` stage
+- GitHub Actions (`.github/workflows/ci.yml`, `.github/workflows/release.yml`)
+- All checks (`test-backend`, `test-frontend`, `code-quality`, `lint-internal`) run **in parallel** on PRs and pushes to `main`
+- Push to `main` publishes images to GHCR (`latest` + commit SHA) after tests pass
+- Push tag `v*` (e.g. `v1.0.0`) runs tests, publishes semver-tagged images, and creates a GitHub Release
 - Code-quality requires `requirements-dev.txt` - install it locally to match CI
+
+## Container Registry (GHCR)
+- Backend: `ghcr.io/beelzetron/chatbot-studio-helper-backend`
+- Frontend: `ghcr.io/beelzetron/chatbot-studio-helper-frontend`
+- Pin OpenShift deployments to a release tag (e.g. `1.0.0`) for reproducible deploys; use `latest` for main tracking
 
 ## Deployment (OpenShift)
 - Ensure `$OPENSHIFT_TOKEN` and `$OPENSHIFT_SERVER` are set
@@ -34,7 +42,7 @@
 - **Frontend**: `docker build -t study-helper-frontend ./frontend` (or `podman build -t study-helper-frontend ./frontend`)
 
 ## Environment Variables (defaults)
-- `LLM_ENDPOINT` → `http://192.168.11.36:8000/v1`
+- `LLM_ENDPOINT` → `http://localhost:8000/v1`
 - `LLM_MODEL` → `local-model`
 - `LLM_TIMEOUT` → `60`
 - `MAX_IMAGE_COUNT` → `3`

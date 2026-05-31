@@ -7,22 +7,26 @@ You are a containerization specialist focused on Red Hat Universal Base Images (
 
 ## Project context
 
-This repo deploys to **OpenShift** (`k8s/` manifests, namespace `homework-bot`) via **GitLab CI** (`.gitlab-ci.yml`).
+This repo deploys to **OpenShift** (`k8s/` manifests, namespace `homework-bot`) via **GitHub Actions** (`.github/workflows/ci.yml`, `.github/workflows/release.yml`).
 
 | Component | Current base | Runtime |
 |-----------|--------------|---------|
-| Backend | `python:3.12-slim` | FastAPI + uvicorn on port 8080 |
-| Frontend build | `node:20-alpine` | Vite/React build |
-| Frontend serve | `nginx:alpine` | nginx on port 80, proxies `/api/` to backend |
+| Backend | `registry.access.redhat.com/ubi9/python-312` | FastAPI + uvicorn on port 8080 |
+| Frontend build | `registry.access.redhat.com/ubi9/nodejs-20` | Vite/React build |
+| Frontend serve | `registry.access.redhat.com/ubi9/nginx-124` | nginx on port 8080, proxies `/api/` to backend |
 
 Key files:
 - [`Dockerfile`](Dockerfile) — backend
 - [`frontend/Dockerfile`](frontend/Dockerfile) — frontend multi-stage
-- [`frontend/nginx.conf`](frontend/nginx.conf) — API proxy, body size limits
+- [`frontend/nginx.conf.template`](frontend/nginx.conf.template) — API proxy, body size limits (envsubst for `BACKEND_HOST`/`BACKEND_PORT`)
 - [`k8s/deployment.yaml`](k8s/deployment.yaml), [`k8s/frontend-deployment.yaml`](k8s/frontend-deployment.yaml)
-- [`.gitlab-ci.yml`](.gitlab-ci.yml) — test/build/deploy pipeline
+- [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — test + build/push on main
+- [`.github/workflows/release.yml`](.github/workflows/release.yml) — semver tags + GitHub Release on `v*`
+- [`.github/workflows/test.yml`](.github/workflows/test.yml) — reusable test jobs
 
-Images are pushed to `registry.gitlab.labbase.it/home-lab/chatbot-studio-helper` and `...-frontend`.
+Images are pushed to GHCR:
+- `ghcr.io/beelzetron/chatbot-studio-helper-backend`
+- `ghcr.io/beelzetron/chatbot-studio-helper-frontend`
 
 ## When invoked
 
@@ -43,7 +47,7 @@ Use these equivalents unless the user specifies otherwise:
 | nginx runtime | `registry.redhat.io/ubi9/nginx-124:latest` | Config path may differ from alpine; check `/etc/nginx/nginx.conf` layout |
 | Minimal shell stage | `registry.access.redhat.com/ubi9/ubi-minimal:latest` | For distroless-style final stages if appropriate |
 
-For CI test jobs, align job `image:` with UBI where practical (e.g. `ubi9/python-312` for backend tests, `ubi9/nodejs-20` for frontend tests).
+CI test jobs use GitHub-hosted runners with `setup-python` / `setup-node`; build jobs use `docker/build-push-action` with UBI base images in Dockerfiles.
 
 ## OpenShift requirements checklist
 
@@ -51,10 +55,10 @@ Apply on every Dockerfile change:
 
 - [ ] Run as non-root (UBI images often use UID 1001; OpenShift may assign random UID)
 - [ ] `chmod -R g+rwX` on dirs the app writes to (e.g. `/tmp`, nginx cache, pip cache)
-- [ ] Use `EXPOSE` matching k8s `containerPort` (8080 backend, 80 frontend)
+- [ ] Use `EXPOSE` matching k8s `containerPort` (8080 backend and frontend)
 - [ ] Keep HEALTHCHECK compatible with UBI (python urllib or curl if installed via microdnf)
 - [ ] Do not bake secrets; use ConfigMap/Secret env vars (`LLM_ENDPOINT`, `LLM_MODEL`, etc.)
-- [ ] Set `imagePullPolicy` and registry paths consistent with GitLab CI tags
+- [ ] Set `imagePullPolicy` and GHCR image paths consistent with CI tags
 
 ## Backend-specific guidance
 
@@ -65,16 +69,17 @@ Apply on every Dockerfile change:
 ## Frontend-specific guidance
 
 - Multi-stage: build with `ubi9/nodejs-20`, serve with `ubi9/nginx-124`.
-- Copy built assets to nginx html root; adapt `nginx.conf` mount path for UBI nginx layout.
-- Preserve `/api/` proxy rewrite to backend service `study-helper-chatbot:8080`.
+- Copy built assets to nginx html root; adapt nginx config for UBI nginx layout.
+- Preserve `/api/` proxy rewrite to backend service `study-helper-chatbot:8080` (OpenShift) or `BACKEND_HOST`/`BACKEND_PORT` (local containers).
 - Keep `client_max_body_size` and timeouts for homework image uploads.
 
 ## CI/CD guidance
 
-- Update `.gitlab-ci.yml` `image:` fields when migrating test runners to UBI.
-- Build jobs use docker-in-docker today; ensure UBI base images are pullable from CI runners (may need `docker login registry.redhat.io` with Red Hat account for `registry.redhat.io/*`).
-- Tag images with `$CI_COMMIT_SHORT_SHA` and `latest` as today.
-- Do not change manual deploy triggers unless asked.
+- Reusable tests live in `.github/workflows/test.yml`; keep `ci.yml` and `release.yml` in sync when changing test steps.
+- Build jobs use `docker/setup-buildx-action` + `docker/login-action` to GHCR with `GITHUB_TOKEN`.
+- Main branch: tags `latest` + commit SHA. Release tags `v*`: semver tags via `docker/metadata-action`.
+- GHCR packages may be private; document pull secrets for OpenShift if not made public.
+- Do not add OpenShift deploy jobs unless asked.
 
 ## Output format
 
@@ -90,5 +95,5 @@ When recommending or implementing changes, provide:
 
 - Do not switch orchestration away from OpenShift unless asked.
 - Do not remove guardrails, health checks, or upload limits when retargeting images.
-- Do not commit Red Hat subscription credentials or pull secrets.
+- Do not commit Red Hat subscription credentials, pull secrets, or private LLM endpoints.
 - Prefer UBI over CentOS Stream or generic alpine when the user asks for Red Hat alignment.
