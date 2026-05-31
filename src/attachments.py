@@ -69,11 +69,12 @@ async def validate_and_process_images(files: list[UploadFile]) -> list[Processed
             )
 
         try:
-            image = Image.open(io.BytesIO(raw))
-            image.verify()
-            image = Image.open(io.BytesIO(raw))
+            Image.open(io.BytesIO(raw)).verify()
+            image: Image.Image = Image.open(io.BytesIO(raw))
         except Exception as exc:
-            raise HTTPException(status_code=400, detail="File immagine non valido") from exc
+            raise HTTPException(
+                status_code=400, detail="File immagine non valido"
+            ) from exc
 
         if image.mode not in ("RGB", "L"):
             image = image.convert("RGB")
