@@ -194,6 +194,34 @@ describe('App', () => {
     });
   });
 
+  it('renders markdown while streaming before the response completes', async () => {
+    let resolveDone: (() => void) | undefined;
+    mockedChatApi.sendMessageStream.mockImplementation(async (_request, onEvent) => {
+      onEvent({ type: 'token', content: '### Tit' });
+      await new Promise<void>((resolve) => {
+        resolveDone = resolve;
+      });
+      onEvent({ type: 'token', content: 'olo' });
+      onEvent({ type: 'done', is_helpful: true });
+    });
+
+    render(<App />);
+
+    const input = screen.getByPlaceholderText('Chiedi spiegazioni o allega una foto...');
+    await fireEvent.change(input, { target: { value: 'Test question' } });
+    await fireEvent.click(screen.getByRole('button', { name: /invia/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { level: 3 })).toHaveTextContent('Tit');
+    });
+
+    resolveDone?.();
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { level: 3 })).toHaveTextContent('Titolo');
+    });
+  });
+
   it('removes attachment preview and disables send again', async () => {
     render(<App />);
 

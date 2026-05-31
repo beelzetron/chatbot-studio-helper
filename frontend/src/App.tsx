@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
   BookOpen, Send, Trash2, Info, AlertCircle, Calculator, Book, Clock,
   FlaskConical, Globe, Languages, Palette, Music, Activity, Cpu,
@@ -39,7 +39,14 @@ function App() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const chatScrollRef = useRef<HTMLDivElement>(null);
   const { messages, isLoading, sendMessage, clearMessages, revokePreviewUrl } = useChat();
+
+  useEffect(() => {
+    const el = chatScrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [messages]);
 
   const canSend = !isLoading && (message.trim().length > 0 || attachments.length > 0);
 
@@ -216,7 +223,7 @@ function App() {
 
           <div className="lg:col-span-3">
             <div className="bg-white/10 backdrop-blur-md rounded-2xl border border-white/20 overflow-hidden">
-              <div className="h-[60vh] overflow-y-auto p-4 space-y-4 bg-white">
+              <div ref={chatScrollRef} className="h-[60vh] overflow-y-auto p-4 space-y-4 bg-white">
                 {messages.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-full text-center text-gray-500">
                     <BookOpen className="w-16 h-16 mb-4 opacity-50" />
@@ -264,11 +271,7 @@ function App() {
                         {msg.role === 'assistant' ? (
                           <div className="flex items-end gap-1">
                             {msg.content ? (
-                              msg.isStreaming ? (
-                                <p className="whitespace-pre-wrap">{msg.content}</p>
-                              ) : (
-                                <MarkdownContent content={msg.content} />
-                              )
+                              <MarkdownContent content={msg.content} />
                             ) : null}
                             {msg.isStreaming && (
                               <span
