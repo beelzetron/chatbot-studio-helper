@@ -6,14 +6,14 @@ import {
 } from 'lucide-react';
 import { MarkdownContent } from './components/MarkdownContent';
 import { useChat } from './hooks/useChat';
+import { chatApi } from './api/chatApi';
 import {
-  ALLOWED_IMAGE_TYPES,
-  MAX_IMAGE_BYTES,
-  MAX_IMAGE_COUNT,
+  DEFAULT_UPLOAD_LIMITS,
   type AttachmentPreview,
   type ChatRequest,
   type GradeLevel,
   GRADE_LEVELS,
+  type UploadLimits,
 } from './types/chat';
 
 const SUBJECTS = [
@@ -30,6 +30,33 @@ const SUBJECTS = [
   { name: 'Informatica', icon: Cpu, color: 'bg-cyan-500' },
 ];
 
+function formatBytes(bytes: number): string {
+  const mib = bytes / (1024 * 1024);
+  return `${Number.isInteger(mib) ? mib : mib.toFixed(1)} MB`;
+}
+
+function normalizeUploadLimits(uploadLimits?: UploadLimits): UploadLimits {
+  if (!uploadLimits) {
+    return DEFAULT_UPLOAD_LIMITS;
+  }
+
+  return {
+    max_images:
+      uploadLimits.max_images > 0
+        ? uploadLimits.max_images
+        : DEFAULT_UPLOAD_LIMITS.max_images,
+    max_bytes_per_image:
+      uploadLimits.max_bytes_per_image > 0
+        ? uploadLimits.max_bytes_per_image
+        : DEFAULT_UPLOAD_LIMITS.max_bytes_per_image,
+    max_pixels_per_image: uploadLimits.max_pixels_per_image,
+    allowed_types:
+      uploadLimits.allowed_types.length > 0
+        ? uploadLimits.allowed_types
+        : DEFAULT_UPLOAD_LIMITS.allowed_types,
+  };
+}
+
 function App() {
   const [message, setMessage] = useState('');
   const [selectedSubject, setSelectedSubject] = useState<string>('');
@@ -37,10 +64,12 @@ function App() {
   const [showInfo, setShowInfo] = useState(false);
   const [attachments, setAttachments] = useState<AttachmentPreview[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadLimits, setUploadLimits] = useState<UploadLimits>(DEFAULT_UPLOAD_LIMITS);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const { messages, isLoading, sendMessage, clearMessages, revokePreviewUrl } = useChat();
+  const maxImageSizeLabel = formatBytes(uploadLimits.max_bytes_per_image);
 
   useEffect(() => {
     const el = chatScrollRef.current;
@@ -48,27 +77,47 @@ function App() {
     el.scrollTop = el.scrollHeight;
   }, [messages]);
 
+  useEffect(() => {
+    let isMounted = true;
+
+    chatApi.getInfo()
+      .then((info) => {
+        if (isMounted) {
+          setUploadLimits(normalizeUploadLimits(info.uploads));
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setUploadLimits(DEFAULT_UPLOAD_LIMITS);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   const canSend = !isLoading && (message.trim().length > 0 || attachments.length > 0);
 
   const addFiles = (files: FileList | null) => {
     if (!files || files.length === 0) return;
 
     setUploadError(null);
-    const slotsLeft = MAX_IMAGE_COUNT - attachments.length;
+    const slotsLeft = uploadLimits.max_images - attachments.length;
     if (slotsLeft <= 0) {
-      setUploadError(`Massimo ${MAX_IMAGE_COUNT} immagini per messaggio`);
+      setUploadError(`Massimo ${uploadLimits.max_images} immagini per messaggio`);
       return;
     }
 
     const newAttachments: AttachmentPreview[] = [];
 
     for (const file of Array.from(files).slice(0, slotsLeft)) {
-      if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+      if (!uploadLimits.allowed_types.includes(file.type)) {
         setUploadError('Formato non supportato. Usa JPEG, PNG o WebP.');
         continue;
       }
-      if (file.size > MAX_IMAGE_BYTES) {
-        setUploadError('Immagine troppo grande (max 5 MB).');
+      if (file.size > uploadLimits.max_bytes_per_image) {
+        setUploadError(`Immagine troppo grande (max ${maxImageSizeLabel}).`);
         continue;
       }
       newAttachments.push({
@@ -151,7 +200,10 @@ function App() {
               <li>✅ Spiegare concetti scolastici in modo chiaro</li>
               <li>✅ Fornire esempi pratici per illustrare i metodi</li>
               <li>✅ Guidare nel ragionamento passo-passo</li>
-              <li>✅ Analizzare foto dei compiti (max 3 immagini, 5 MB ciascuna)</li>
+              <li>
+                ✅ Analizzare foto dei compiti (max {uploadLimits.max_images} immagini,{' '}
+                {maxImageSizeLabel} ciascuna)
+              </li>
               <li>❌ NON fornire soluzioni complete dei compiti</li>
               <li>❌ Rifiutare richieste fuori contesto scolastico</li>
             </ul>
@@ -325,7 +377,7 @@ function App() {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept={ALLOWED_IMAGE_TYPES.join(',')}
+                  accept={uploadLimits.allowed_types.join(',')}
                   multiple
                   className="hidden"
                   onChange={(e) => {
@@ -349,7 +401,7 @@ function App() {
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    disabled={isLoading || attachments.length >= MAX_IMAGE_COUNT}
+                    disabled={isLoading || attachments.length >= uploadLimits.max_images}
                     className="p-3 text-gray-400 hover:text-white transition-colors disabled:opacity-50"
                     title="Allega immagine"
                     aria-label="Allega immagine"
@@ -359,7 +411,7 @@ function App() {
                   <button
                     type="button"
                     onClick={() => cameraInputRef.current?.click()}
-                    disabled={isLoading || attachments.length >= MAX_IMAGE_COUNT}
+                    disabled={isLoading || attachments.length >= uploadLimits.max_images}
                     className="p-3 text-gray-400 hover:text-white transition-colors disabled:opacity-50"
                     title="Scatta foto"
                     aria-label="Scatta foto"

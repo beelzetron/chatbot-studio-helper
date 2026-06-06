@@ -12,7 +12,7 @@ metadata:
   name: study-helper-config
   namespace: homework-bot
 data:
-  # Override at deploy time, e.g. oc patch configmap study-helper-config -n homework-bot \
+  # Override at deploy time for multi-model servers, e.g. oc patch configmap study-helper-config -n homework-bot \
   #   --type merge -p '{"data":{"LLM_ENDPOINT":"http://YOUR_LLM_HOST:8000/v1","LLM_MODEL":"your-model"}}'
   LLM_ENDPOINT: "http://your-llm-host:8000/v1"
   LLM_MODEL: "local-model"

@@ -96,6 +96,8 @@ oc apply -f k8s/ -n homework-bot
 oc patch configmap study-helper-config -n homework-bot \
   --type merge -p '{"data":{"LLM_ENDPOINT":"http://YOUR_LLM_HOST:8000/v1","LLM_MODEL":"your-model"}}'
 
+# If the LLM endpoint exposes exactly one model at /models, LLM_MODEL can stay local-model for auto-detect.
+
 # Check status
 oc get pods -n homework-bot
 oc get route study-helper-frontend -n homework-bot
@@ -165,7 +167,7 @@ Service information and guardrails documentation.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | LLM_ENDPOINT | http://localhost:8000/v1 | LLM API endpoint |
-| LLM_MODEL | local-model | Model name to use (must support vision for image uploads) |
+| LLM_MODEL | local-model | Model name to use. Blank or `local-model` auto-detects the sole `/models` id; set explicitly when multiple models are available. |
 | LLM_TIMEOUT | 60 | Timeout in seconds for LLM requests |
 | MAX_IMAGE_COUNT | 3 | Max images per chat message |
 | MAX_IMAGE_BYTES | 5242880 | Max bytes per image (5 MB) |

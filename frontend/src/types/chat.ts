@@ -14,6 +14,21 @@ export interface ChatResponse {
   violation_reason?: string;
 }
 
+export interface UploadLimits {
+  max_images: number;
+  max_bytes_per_image: number;
+  max_pixels_per_image?: number;
+  allowed_types: string[];
+}
+
+export interface ServiceInfo {
+  name: string;
+  version: string;
+  description: string;
+  guardrails: string[];
+  uploads?: UploadLimits;
+}
+
 export interface MessageAttachment {
   previewUrl: string;
   name: string;
@@ -54,6 +69,11 @@ export interface Subject {
 export const MAX_IMAGE_COUNT = 3;
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 export const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+export const DEFAULT_UPLOAD_LIMITS: UploadLimits = {
+  max_images: MAX_IMAGE_COUNT,
+  max_bytes_per_image: MAX_IMAGE_BYTES,
+  allowed_types: ALLOWED_IMAGE_TYPES,
+};
 
 export const GRADE_LEVELS: { value: GradeLevel; label: string }[] = [
   { value: 'primary', label: 'Scuole elementari' },

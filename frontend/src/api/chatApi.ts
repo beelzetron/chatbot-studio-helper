@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { ChatRequest, ChatResponse, ChatStreamEvent } from '../types/chat';
+import type { ChatRequest, ChatResponse, ChatStreamEvent, ServiceInfo } from '../types/chat';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -95,17 +95,7 @@ export const chatApi = {
     return response.data;
   },
 
-  async getInfo(): Promise<{
-    name: string;
-    version: string;
-    description: string;
-    guardrails: string[];
-    uploads?: {
-      max_images: number;
-      max_bytes_per_image: number;
-      allowed_types: string[];
-    };
-  }> {
+  async getInfo(): Promise<ServiceInfo> {
     const response = await apiClient.get('/info');
     return response.data;
   },

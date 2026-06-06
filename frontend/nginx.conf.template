@@ -1,4 +1,4 @@
-client_max_body_size 15m;
+client_max_body_size ${CLIENT_MAX_BODY_SIZE};
 
 # Gzip compression
 gzip on;

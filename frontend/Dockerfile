@@ -23,4 +23,4 @@ USER 1001
 
 EXPOSE 8080
 
-CMD ["/bin/sh", "-c", "envsubst '${BACKEND_HOST} ${BACKEND_PORT}' < /opt/app-root/etc/nginx.default.d/app.conf.template > /opt/app-root/etc/nginx.default.d/app.conf && /usr/libexec/s2i/run"]
+CMD ["/bin/sh", "-c", "export CLIENT_MAX_BODY_SIZE=${CLIENT_MAX_BODY_SIZE:-20m} && envsubst '${BACKEND_HOST} ${BACKEND_PORT} ${CLIENT_MAX_BODY_SIZE}' < /opt/app-root/etc/nginx.default.d/app.conf.template > /opt/app-root/etc/nginx.default.d/app.conf && /usr/libexec/s2i/run"]

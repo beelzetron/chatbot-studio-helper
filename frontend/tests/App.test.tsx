@@ -6,6 +6,7 @@ import { chatApi } from '../src/api/chatApi';
 vi.mock('../src/api/chatApi', () => ({
   chatApi: {
     sendMessageStream: vi.fn(),
+    getInfo: vi.fn(),
   },
 }));
 
@@ -21,6 +22,12 @@ function mockStreamResponse(response: string, isHelpful = true): void {
 describe('App', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockedChatApi.getInfo.mockResolvedValue({
+      name: 'Study Helper Chatbot',
+      version: '1.0.0',
+      description: 'Test service',
+      guardrails: [],
+    });
   });
 
   it('renders the app header', () => {
@@ -175,6 +182,47 @@ describe('App', () => {
         }),
         expect.any(Function),
       );
+    });
+  });
+
+  it('uses upload limits from service info', async () => {
+    mockedChatApi.getInfo.mockResolvedValue({
+      name: 'Study Helper Chatbot',
+      version: '1.0.0',
+      description: 'Test service',
+      guardrails: [],
+      uploads: {
+        max_images: 1,
+        max_bytes_per_image: 2 * 1024 * 1024,
+        allowed_types: ['image/png'],
+      },
+    });
+
+    render(<App />);
+    await fireEvent.click(screen.getByLabelText('Informazioni'));
+
+    await waitFor(() => {
+      expect(screen.getByText(/max 1 immagini, 2 MB ciascuna/i)).toBeInTheDocument();
+    });
+
+    const fileInput = document.querySelector('input[type="file"]:not([capture])') as HTMLInputElement;
+    const jpeg = new File(['photo'], 'homework.jpg', { type: 'image/jpeg' });
+    await fireEvent.change(fileInput, { target: { files: [jpeg] } });
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Formato non supportato');
+  });
+
+  it('falls back to default upload limits when service info fails', async () => {
+    mockedChatApi.getInfo.mockRejectedValue(new Error('Info unavailable'));
+
+    render(<App />);
+
+    const fileInput = document.querySelector('input[type="file"]:not([capture])') as HTMLInputElement;
+    const file = new File(['photo'], 'homework.jpg', { type: 'image/jpeg' });
+    await fireEvent.change(fileInput, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Rimuovi homework.jpg')).toBeInTheDocument();
     });
   });
 

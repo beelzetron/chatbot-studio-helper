@@ -195,7 +195,7 @@ curl -X POST http://localhost:8080/chat \
 | Variabile | Default | Descrizione |
 |-----------|---------|-------------|
 | `LLM_ENDPOINT` | http://localhost:8000/v1 | Endpoint API LLM |
-| `LLM_MODEL` | local-model | Nome del modello da usare |
+| `LLM_MODEL` | local-model | Nome del modello da usare. Vuoto o `local-model` auto-rileva l'unico id da `/models`; impostalo esplicitamente se il server espone più modelli. |
 | `LLM_TIMEOUT` | 60 | Timeout in secondi per le richieste LLM |
 | `MAX_IMAGE_COUNT` | 3 | Numero massimo di immagini per messaggio |
 | `MAX_IMAGE_BYTES` | 5242880 | Massimo byte per immagine (5 MB) |

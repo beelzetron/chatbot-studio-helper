@@ -3,6 +3,7 @@
 import base64
 import io
 import os
+import warnings
 from dataclasses import dataclass
 
 from fastapi import HTTPException, UploadFile
@@ -11,6 +12,8 @@ from PIL import Image
 MAX_IMAGE_COUNT = int(os.getenv("MAX_IMAGE_COUNT", "3"))
 MAX_IMAGE_BYTES = int(os.getenv("MAX_IMAGE_BYTES", str(5 * 1024 * 1024)))
 MAX_IMAGE_DIMENSION = int(os.getenv("MAX_IMAGE_DIMENSION", "2048"))
+MAX_IMAGE_PIXELS = int(os.getenv("MAX_IMAGE_PIXELS", "24000000"))
+Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
 
 ALLOWED_MIME_TYPES = {
     "image/jpeg": "JPEG",
@@ -69,17 +72,30 @@ async def validate_and_process_images(files: list[UploadFile]) -> list[Processed
             )
 
         try:
-            Image.open(io.BytesIO(raw)).verify()
-            image: Image.Image = Image.open(io.BytesIO(raw))
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", Image.DecompressionBombWarning)
+                Image.open(io.BytesIO(raw)).verify()
+                image: Image.Image = Image.open(io.BytesIO(raw))
+                width, height = image.size
+        except (Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="Risoluzione immagine troppo grande",
+            ) from exc
         except Exception as exc:
             raise HTTPException(
                 status_code=400, detail="File immagine non valido"
             ) from exc
 
+        if width * height > MAX_IMAGE_PIXELS:
+            raise HTTPException(
+                status_code=400,
+                detail="Risoluzione immagine troppo grande",
+            )
+
         if image.mode not in ("RGB", "L"):
             image = image.convert("RGB")
 
-        width, height = image.size
         if width > MAX_IMAGE_DIMENSION or height > MAX_IMAGE_DIMENSION:
             scale = min(MAX_IMAGE_DIMENSION / width, MAX_IMAGE_DIMENSION / height)
             image = image.resize(
