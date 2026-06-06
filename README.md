@@ -212,6 +212,18 @@ cd frontend && npm install && npm run dev
 
 See [LOCALEXECUTION.md](LOCALEXECUTION.md) for Podman/Docker container runs.
 
+## Mobile Web App
+
+Il frontend è configurato come PWA installabile:
+
+- manifest standalone in `frontend/public/manifest.webmanifest`
+- icone PNG `192x192`, `512x512`, maskable e Apple touch icon
+- service worker generato da Vite per precache dell'app shell e fallback di navigazione
+- richieste `/api/*`, inclusa `/api/chat/stream`, sempre network-only e non cacheate
+- metadata iOS per “Aggiungi a Home” da Safari
+
+Per l'installabilità in produzione serve HTTPS, tranne che su `localhost` durante lo sviluppo. Su Android Chrome compare l'installazione quando manifest, icone e service worker sono validi. Su iOS Safari l'utente deve usare Condividi → Aggiungi a Home; la chat richiede comunque backend e LLM raggiungibili, mentre l'app shell può aprirsi offline.
+
 ## Testing
 
 ```bash

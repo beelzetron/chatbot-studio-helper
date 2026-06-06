@@ -65,6 +65,7 @@ function App() {
   const [attachments, setAttachments] = useState<AttachmentPreview[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadLimits, setUploadLimits] = useState<UploadLimits>(DEFAULT_UPLOAD_LIMITS);
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
@@ -94,6 +95,19 @@ function App() {
 
     return () => {
       isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
     };
   }, []);
 
@@ -170,7 +184,7 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
+    <div className="min-h-screen min-h-[100dvh] bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
       <header className="bg-white/10 backdrop-blur-md border-b border-white/20 sticky top-0 z-50">
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -211,7 +225,15 @@ function App() {
         </div>
       )}
 
-      <main className="max-w-6xl mx-auto px-4 py-6">
+      {!isOnline && (
+        <div className="bg-amber-500/95 text-slate-950" role="status">
+          <div className="max-w-6xl mx-auto px-4 py-2 text-sm font-medium">
+            Connessione assente. L'app rimane disponibile, ma la chat richiede il backend online.
+          </div>
+        </div>
+      )}
+
+      <main className="max-w-6xl mx-auto px-4 py-4 sm:py-6">
         <div className="grid lg:grid-cols-4 gap-6">
           <aside className="lg:col-span-1 space-y-4">
             <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/20">
@@ -275,7 +297,10 @@ function App() {
 
           <div className="lg:col-span-3">
             <div className="bg-white/10 backdrop-blur-md rounded-2xl border border-white/20 overflow-hidden">
-              <div ref={chatScrollRef} className="h-[60vh] overflow-y-auto p-4 space-y-4 bg-white">
+              <div
+                ref={chatScrollRef}
+                className="h-[60dvh] min-h-[22rem] max-h-[44rem] overflow-y-auto p-3 sm:p-4 space-y-4 bg-white"
+              >
                 {messages.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-full text-center text-gray-500">
                     <BookOpen className="w-16 h-16 mb-4 opacity-50" />
@@ -294,7 +319,7 @@ function App() {
                       } animate-slide-up`}
                     >
                       <div
-                        className={`max-w-[80%] rounded-2xl px-4 py-3 ${
+                        className={`max-w-[92%] sm:max-w-[80%] rounded-2xl px-4 py-3 ${
                           msg.role === 'user'
                             ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white'
                             : msg.isWarning
@@ -347,7 +372,7 @@ function App() {
                 )}
               </div>
 
-              <form onSubmit={handleSubmit} className="border-t border-white/20 p-4 space-y-3">
+              <form onSubmit={handleSubmit} className="border-t border-white/20 p-3 sm:p-4 space-y-3">
                 {attachments.length > 0 && (
                   <div className="flex flex-wrap gap-2">
                     {attachments.map((attachment) => (
@@ -397,12 +422,12 @@ function App() {
                   }}
                 />
 
-                <div className="flex gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
                     disabled={isLoading || attachments.length >= uploadLimits.max_images}
-                    className="p-3 text-gray-400 hover:text-white transition-colors disabled:opacity-50"
+                    className="shrink-0 p-3 text-gray-400 hover:text-white transition-colors disabled:opacity-50"
                     title="Allega immagine"
                     aria-label="Allega immagine"
                   >
@@ -412,7 +437,7 @@ function App() {
                     type="button"
                     onClick={() => cameraInputRef.current?.click()}
                     disabled={isLoading || attachments.length >= uploadLimits.max_images}
-                    className="p-3 text-gray-400 hover:text-white transition-colors disabled:opacity-50"
+                    className="shrink-0 p-3 text-gray-400 hover:text-white transition-colors disabled:opacity-50"
                     title="Scatta foto"
                     aria-label="Scatta foto"
                   >
@@ -423,13 +448,13 @@ function App() {
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
                     placeholder="Chiedi spiegazioni o allega una foto..."
-                    className="flex-1 bg-white border border-gray-300 rounded-xl px-4 py-3 text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all"
+                    className="min-w-0 flex-[1_1_14rem] bg-white border border-gray-300 rounded-xl px-4 py-3 text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all"
                     disabled={isLoading}
                   />
                   <button
                     type="button"
                     onClick={handleClearChat}
-                    className="p-3 text-gray-400 hover:text-white transition-colors"
+                    className="shrink-0 p-3 text-gray-400 hover:text-white transition-colors"
                     title="Pulisci chat"
                   >
                     <Trash2 className="w-5 h-5" />
@@ -438,7 +463,7 @@ function App() {
                     type="submit"
                     disabled={!canSend}
                     aria-label="Invia"
-                    className="p-3 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl text-white disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90 transition-all"
+                    className="shrink-0 p-3 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl text-white disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90 transition-all"
                   >
                     <Send className="w-5 h-5" />
                   </button>
