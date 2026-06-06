@@ -12,3 +12,4 @@ k8s/overlays/local/
 
 frontend/node_modules/
 frontend/dist/
+.tokensave
