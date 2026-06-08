@@ -332,7 +332,9 @@ def build_llm_payload(
     stream: bool = False,
 ) -> dict:
     user_content = build_user_content(user_message, images or [])
-    messages = [{"role": "system", "content": system_prompt}]
+    messages: list[dict[str, object]] = [
+        {"role": "system", "content": system_prompt}
+    ]
     messages.extend(
         {"role": message.role, "content": message.content}
         for message in (history or [])
