@@ -2,6 +2,7 @@
 
 import base64
 import io
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -128,6 +129,44 @@ class TestMultimodalContent:
         assert content[0]["type"] == "text"
         assert content[1]["type"] == "image_url"
         assert "data:image/jpeg;base64,abc123" in content[1]["image_url"]["url"]
+
+    def test_llm_payload_includes_conversation_history_before_new_message(self):
+        history = [
+            main.ChatHistoryMessage(
+                role="user", content="Fammi un quiz sul Giurassico"
+            ),
+            main.ChatHistoryMessage(
+                role="assistant", content="1. Quanto duro circa? A/B/C"
+            ),
+        ]
+
+        payload = main.build_llm_payload(
+            "system prompt",
+            "1-B, 2-B, 3-A, 4-B, 5-B",
+            "test-model",
+            history=history,
+        )
+
+        assert payload["messages"] == [
+            {"role": "system", "content": "system prompt"},
+            {"role": "user", "content": "Fammi un quiz sul Giurassico"},
+            {"role": "assistant", "content": "1. Quanto duro circa? A/B/C"},
+            {"role": "user", "content": "1-B, 2-B, 3-A, 4-B, 5-B"},
+        ]
+
+    def test_parse_chat_history_discards_invalid_entries_and_limits_size(self):
+        oversized = "x" * (main.MAX_HISTORY_CONTENT_CHARS + 10)
+        raw_history = [
+            {"role": "system", "content": "ignored"},
+            {"role": "user", "content": "   "},
+            {"role": "user", "content": oversized},
+            {"role": "assistant", "content": "Risposta"},
+        ]
+
+        history = main.parse_chat_history(json.dumps(raw_history))
+
+        assert [message.role for message in history] == ["user", "assistant"]
+        assert len(history[0].content) == main.MAX_HISTORY_CONTENT_CHARS
 
 
 class TestImageGuardrails:

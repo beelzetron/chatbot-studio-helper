@@ -4,7 +4,13 @@ export interface ChatRequest {
   message: string;
   subject?: string;
   grade_level?: GradeLevel;
+  history?: ChatHistoryMessage[];
   images?: File[];
+}
+
+export interface ChatHistoryMessage {
+  role: 'user' | 'assistant';
+  content: string;
 }
 
 export interface ChatResponse {

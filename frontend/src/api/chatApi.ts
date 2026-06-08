@@ -18,6 +18,9 @@ function buildChatFormData(request: ChatRequest): FormData {
   if (request.grade_level) {
     formData.append('grade_level', request.grade_level);
   }
+  if (request.history && request.history.length > 0) {
+    formData.append('history', JSON.stringify(request.history));
+  }
 
   for (const image of request.images ?? []) {
     formData.append('images', image);

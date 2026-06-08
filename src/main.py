@@ -7,7 +7,7 @@ Guardrail implementati per prevenire utilizzi impropri.
 import json
 import os
 import re
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator, Literal, Optional
 
 import httpx
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -31,6 +31,8 @@ AUTO_MODEL_PLACEHOLDERS = {"", "local-model"}
 _AUTO_MODEL_CACHE: dict[str, str] = {}
 
 DEFAULT_IMAGE_MESSAGE = "Aiutami a capire questo esercizio dall'immagine"
+MAX_HISTORY_MESSAGES = 20
+MAX_HISTORY_CONTENT_CHARS = 4000
 
 # Safety guardrails
 SCHOOL_SUBJECTS = [
@@ -188,6 +190,11 @@ class ChatResponse(BaseModel):
     violation_reason: Optional[str] = None
 
 
+class ChatHistoryMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
 def check_school_context(
     message: str,
     subject: Optional[str] = None,
@@ -320,16 +327,21 @@ def build_llm_payload(
     user_message: str,
     model_id: str,
     images: Optional[list[attachments.ProcessedImage]] = None,
+    history: Optional[list[ChatHistoryMessage]] = None,
     *,
     stream: bool = False,
 ) -> dict:
     user_content = build_user_content(user_message, images or [])
+    messages = [{"role": "system", "content": system_prompt}]
+    messages.extend(
+        {"role": message.role, "content": message.content}
+        for message in (history or [])
+    )
+    messages.append({"role": "user", "content": user_content})
+
     payload = {
         "model": model_id,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
-        ],
+        "messages": messages,
         "temperature": 0.7,
         "max_tokens": 1000,
         "chat_template_kwargs": {"enable_thinking": False},
@@ -372,6 +384,44 @@ def _extract_model_ids(models_payload: object) -> list[str]:
     return model_ids
 
 
+def parse_chat_history(history: Optional[str]) -> list[ChatHistoryMessage]:
+    if not history:
+        return []
+
+    try:
+        raw_history = json.loads(history)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=400, detail="Cronologia chat non valida"
+        ) from exc
+
+    if not isinstance(raw_history, list):
+        raise HTTPException(status_code=400, detail="Cronologia chat non valida")
+
+    parsed: list[ChatHistoryMessage] = []
+    for item in raw_history[-MAX_HISTORY_MESSAGES:]:
+        if not isinstance(item, dict):
+            continue
+
+        role = item.get("role")
+        content = item.get("content")
+        if role not in {"user", "assistant"} or not isinstance(content, str):
+            continue
+
+        content = content.strip()
+        if not content:
+            continue
+
+        parsed.append(
+            ChatHistoryMessage(
+                role=role,
+                content=content[:MAX_HISTORY_CONTENT_CHARS],
+            )
+        )
+
+    return parsed
+
+
 async def resolve_llm_model(client: httpx.AsyncClient) -> str:
     """Return the explicit model or auto-detect the sole model exposed by the LLM server."""
     configured_model = _configured_llm_model()
@@ -408,13 +458,14 @@ async def stream_llm(
     system_prompt: str,
     user_message: str,
     images: Optional[list[attachments.ProcessedImage]] = None,
+    history: Optional[list[ChatHistoryMessage]] = None,
 ) -> AsyncIterator[str]:
     """Stream text tokens from the local OpenAI-compatible LLM."""
     try:
         async with httpx.AsyncClient(timeout=LLM_TIMEOUT) as client:
             model_id = await resolve_llm_model(client)
             payload = build_llm_payload(
-                system_prompt, user_message, model_id, images, stream=True
+                system_prompt, user_message, model_id, images, history, stream=True
             )
             async with client.stream(
                 "POST",
@@ -449,6 +500,7 @@ async def call_llm(
     system_prompt: str,
     user_message: str,
     images: Optional[list[attachments.ProcessedImage]] = None,
+    history: Optional[list[ChatHistoryMessage]] = None,
 ) -> str:
     """
     Chiamata all'LLM locale via API compatibile OpenAI.
@@ -458,7 +510,13 @@ async def call_llm(
             model_id = await resolve_llm_model(client)
             response = await client.post(
                 f"{LLM_ENDPOINT}/chat/completions",
-                json=build_llm_payload(system_prompt, user_message, model_id, images),
+                json=build_llm_payload(
+                    system_prompt,
+                    user_message,
+                    model_id,
+                    images,
+                    history,
+                ),
             )
             response.raise_for_status()
             data = response.json()
@@ -500,6 +558,7 @@ async def chat(
     message: str = Form(""),
     subject: Optional[str] = Form(None),
     grade_level: Optional[str] = Form(None),
+    history: Optional[str] = Form(None),
     images: list[UploadFile] = File(default=[]),
 ):
     """
@@ -518,7 +577,10 @@ async def chat(
         )
 
     system_prompt = build_system_prompt(grade_level, has_images=has_images)
-    response_text = await call_llm(system_prompt, user_message, processed_images)
+    chat_history = parse_chat_history(history)
+    response_text = await call_llm(
+        system_prompt, user_message, processed_images, chat_history
+    )
 
     return ChatResponse(
         response=response_text,
@@ -531,12 +593,14 @@ async def chat_stream(
     message: str = Form(""),
     subject: Optional[str] = Form(None),
     grade_level: Optional[str] = Form(None),
+    history: Optional[str] = Form(None),
     images: list[UploadFile] = File(default=[]),
 ):
     """Stream chat response tokens via Server-Sent Events."""
     user_message, has_images, processed_images, (is_valid, reason) = (
         await prepare_chat_request(message, subject, images)
     )
+    chat_history = parse_chat_history(history)
 
     async def event_generator() -> AsyncIterator[str]:
         if not is_valid:
@@ -554,7 +618,7 @@ async def chat_stream(
         system_prompt = build_system_prompt(grade_level, has_images=has_images)
         try:
             async for token in stream_llm(
-                system_prompt, user_message, processed_images
+                system_prompt, user_message, processed_images, chat_history
             ):
                 yield sse_event({"type": "token", "content": token})
             yield sse_event({"type": "done", "is_helpful": True})

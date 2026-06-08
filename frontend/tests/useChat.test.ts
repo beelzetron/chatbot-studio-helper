@@ -73,6 +73,40 @@ describe('useChat', () => {
     });
   });
 
+  it('sends prior text turns as conversation history', async () => {
+    mockedChatApi.sendMessageStream
+      .mockImplementationOnce(async (_request, onEvent) => {
+        onEvent({ type: 'token', content: 'Quiz question' });
+        onEvent({ type: 'done', is_helpful: true });
+      })
+      .mockImplementationOnce(async (_request, onEvent) => {
+        onEvent({ type: 'token', content: 'Correct' });
+        onEvent({ type: 'done', is_helpful: true });
+      });
+
+    const { result } = renderHook(() => useChat());
+
+    await result.current.sendMessage({ message: 'Fammi un quiz sul Giurassico' });
+
+    await waitFor(() => {
+      expect(result.current.messages[1].content).toBe('Quiz question');
+    });
+
+    await result.current.sendMessage({ message: '1-B, 2-B, 3-A, 4-B, 5-B' });
+
+    await waitFor(() => {
+      expect(mockedChatApi.sendMessageStream).toHaveBeenCalledTimes(2);
+    });
+
+    expect(mockedChatApi.sendMessageStream.mock.calls[1][0]).toMatchObject({
+      message: '1-B, 2-B, 3-A, 4-B, 5-B',
+      history: [
+        { role: 'user', content: 'Fammi un quiz sul Giurassico' },
+        { role: 'assistant', content: 'Quiz question' },
+      ],
+    });
+  });
+
   it('handles API error gracefully', async () => {
     mockedChatApi.sendMessageStream.mockRejectedValue(new Error('Network error'));
 

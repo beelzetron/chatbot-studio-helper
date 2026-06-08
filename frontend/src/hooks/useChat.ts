@@ -1,9 +1,37 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { chatApi } from '../api/chatApi';
-import type { ChatRequest, ChatResponse, Message, MessageAttachment } from '../types/chat';
+import type {
+  ChatHistoryMessage,
+  ChatRequest,
+  ChatResponse,
+  Message,
+  MessageAttachment,
+} from '../types/chat';
 
 const CONNECTION_ERROR =
   'Mi dispiace, ma ho avuto un problema di connessione. Per favore riprova.';
+const MAX_HISTORY_MESSAGES = 20;
+
+function isHistoryRole(role: Message['role']): role is ChatHistoryMessage['role'] {
+  return role === 'user' || role === 'assistant';
+}
+
+function buildConversationHistory(messages: Message[]): ChatHistoryMessage[] {
+  return messages
+    .flatMap((message) => {
+      if (!isHistoryRole(message.role) || message.isStreaming || message.isWarning) {
+        return [];
+      }
+
+      const content = message.content.trim();
+      if (!content) {
+        return [];
+      }
+
+      return [{ role: message.role, content }];
+    })
+    .slice(-MAX_HISTORY_MESSAGES);
+}
 
 export function useChat() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -55,6 +83,11 @@ export function useChat() {
       isStreaming: true,
     };
 
+    const requestWithHistory: ChatRequest = {
+      ...request,
+      history: request.history ?? buildConversationHistory(messages),
+    };
+
     setMessages((prev) => [...prev, userMessage, assistantMessage]);
 
     let streamedContent = '';
@@ -64,7 +97,7 @@ export function useChat() {
     };
 
     try {
-      await chatApi.sendMessageStream(request, (event) => {
+      await chatApi.sendMessageStream(requestWithHistory, (event) => {
         if (event.type === 'token') {
           streamedContent += event.content;
           setMessages((prev) =>
@@ -133,7 +166,7 @@ export function useChat() {
     } finally {
       setIsLoading(false);
     }
-  }, [trackPreviewUrl]);
+  }, [messages, trackPreviewUrl]);
 
   const clearMessages = useCallback(() => {
     previewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
