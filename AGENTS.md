@@ -3,7 +3,7 @@
 ## Local Development
 - **Backend**: `pip install -r requirements-dev.txt` then `PYTHONPATH=. uvicorn src.main:app --host 0.0.0.0 --port 8080`
 - **Frontend**: `cd frontend && npm install && npm run dev` (proxy `/api/*` → backend)
-- **Run tests**: `pip install -r requirements-dev.txt` then `PYTHONPATH=. pytest tests/ -v`
+- **Run tests**: Prefer containerized execution with Podman/Docker so local Python dependencies are not required. Example: `podman run --rm -v "$PWD:/app:Z" -w /app python:3.12-slim sh -lc "pip install -r requirements.txt -r requirements-dev.txt && PYTHONPATH=. pytest tests/ -v"` (or the same command with `docker`).
 - **Frontend tests**: `cd frontend && npm ci && npm run test -- --run`
 
 ## Linting & Type‑checking
