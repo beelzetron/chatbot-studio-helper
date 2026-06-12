@@ -231,8 +231,12 @@ def _contains_any(text: str, values: list[str]) -> bool:
 
 def _looks_like_student_answer(message_lower: str) -> bool:
     numbered_answer = re.search(r"(?:^|\s)\d+\s*[:.)-]\s*\S+", message_lower)
-    multiple_answer_markers = len(re.findall(r"(?:^|\s)\d+\s*[:.)-]", message_lower)) >= 2
-    answer_words = re.search(r"\b(secondo\s+me|penso\s+che|perch[eé]|quindi)\b", message_lower)
+    multiple_answer_markers = (
+        len(re.findall(r"(?:^|\s)\d+\s*[:.)-]", message_lower)) >= 2
+    )
+    answer_words = re.search(
+        r"\b(secondo\s+me|penso\s+che|perch[eé]|quindi)\b", message_lower
+    )
 
     return bool(numbered_answer or multiple_answer_markers or answer_words)
 
@@ -320,7 +324,9 @@ def check_school_context(
     if (
         not has_educational_intent
         and len(message) > 50
-        and not (has_school_context and (looks_like_student_answer or looks_like_question))
+        and not (
+            has_school_context and (looks_like_student_answer or looks_like_question)
+        )
     ):
         return (
             False,
