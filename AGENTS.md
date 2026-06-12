@@ -17,6 +17,7 @@
 
 ## Formatting
 - Keep lines ≤120 chars; ignore E203/W503
+- Format Python source with Black before committing changes.
 
 ## CI Pipeline
 - GitHub Actions (`.github/workflows/ci.yml`, `.github/workflows/release.yml`)
