@@ -124,6 +124,13 @@ NON_SCHOOL_PATTERNS = [
     r"\b(poker|casino|scommesse|gambling|azzardo)\b",
 ]
 
+DIRECT_HOMEWORK_PATTERNS = [
+    r"\b(ecco\s+il\s+compito|testo\s+del\s+compito)\b",
+    r"\b(svolgi|risolvi|completa)\s+(?:tutto\s+)?(?:il\s+)?compito\b",
+    r"\b(?:dammi|dimmi|scrivi|fornisci)\s+(?:solo\s+)?(?:la\s+)?(?:soluzione|risposta|risposte)\b",
+    r"\b(?:soluzione|risposta|risposte)\s+(?:completa|complete|finale|finali)\b",
+]
+
 # Prompt injection attack patterns
 PROMPT_INJECTION_PATTERNS = [
     # Instruction override attempts
@@ -138,7 +145,8 @@ PROMPT_INJECTION_PATTERNS = [
     r"\b(modalità\s+sviluppatore|developer\s+mode|debug\s+mode)\b",
     r"\b(modalità\s+test|test\s+mode|sandbox\s+bypass)\b",
     # Hypothetical scenarios
-    r"\b(immagina\s+che|pretend\s+that|suppose\s+that)\b",
+    r"\b(immagina\s+che).*\b(soluzione|risposta\s+completa|regole|limiti|ignora|bypass)\b",
+    r"\b(pretend\s+that|suppose\s+that).*\b(solution|answer|rules|for\s+research|ignore|bypass)\b",
     r"\b(esercizio\s+di\s+sicurezza|security\s+exercise|research\s+purpose)\b",
     r"\b(solo\s+per\s+finzione|just\s+for\s+fun|hypothetically)\b",
     # Game/Roleplay bypass
@@ -182,6 +190,28 @@ EDUCATIONAL_KEYWORDS = [
     "in foto",
 ]
 
+SCHOOL_CONTEXT_KEYWORDS = [
+    "compito",
+    "domanda",
+    "quiz",
+    "verifica",
+    "interrogazione",
+    "lezione",
+    "studio",
+    "classe",
+    "professore",
+    "maestra",
+    "alunno",
+    "studente",
+    "rispondi",
+    "risposta",
+    "ragionamento",
+    "repubblica",
+    "impero",
+    "romani",
+    "roma",
+]
+
 
 class ChatResponse(BaseModel):
     response: str
@@ -195,10 +225,56 @@ class ChatHistoryMessage(BaseModel):
     content: str
 
 
+def _contains_any(text: str, values: list[str]) -> bool:
+    return any(value in text for value in values)
+
+
+def _looks_like_student_answer(message_lower: str) -> bool:
+    numbered_answer = re.search(r"(?:^|\s)\d+\s*[:.)-]\s*\S+", message_lower)
+    multiple_answer_markers = (
+        len(re.findall(r"(?:^|\s)\d+\s*[:.)-]", message_lower)) >= 2
+    )
+    answer_words = re.search(
+        r"\b(secondo\s+me|penso\s+che|perch[eé]|quindi)\b", message_lower
+    )
+
+    return bool(numbered_answer or multiple_answer_markers or answer_words)
+
+
+def _looks_like_question(message_lower: str) -> bool:
+    question_words = re.search(
+        r"\b(come|cosa|che\s+cosa|perch[eé]|quando|dove|quale|quali|chi)\b",
+        message_lower,
+    )
+    return "?" in message_lower or bool(question_words)
+
+
+def _has_school_context(
+    message_lower: str,
+    subject: Optional[str] = None,
+    history: Optional[list[ChatHistoryMessage]] = None,
+) -> bool:
+    all_school_topics = SCHOOL_SUBJECTS + PRIMARY_GRADE_TOPICS + SECONDARY_GRADE_TOPICS
+    if subject and _contains_any(subject.lower(), all_school_topics):
+        return True
+
+    school_terms = all_school_topics + EDUCATIONAL_KEYWORDS + SCHOOL_CONTEXT_KEYWORDS
+    if _contains_any(message_lower, school_terms):
+        return True
+
+    for history_message in (history or [])[-4:]:
+        content_lower = history_message.content.lower()
+        if _contains_any(content_lower, school_terms):
+            return True
+
+    return False
+
+
 def check_school_context(
     message: str,
     subject: Optional[str] = None,
     has_images: bool = False,
+    history: Optional[list[ChatHistoryMessage]] = None,
 ) -> tuple[bool, str]:
     """
     Verifica se la richiesta è in contesto scolastico.
@@ -216,6 +292,13 @@ def check_school_context(
         if re.search(pattern, message_lower, re.IGNORECASE):
             return False, "Richiesta fuori dal contesto scolastico"
 
+    for pattern in DIRECT_HOMEWORK_PATTERNS:
+        if re.search(pattern, message_lower, re.IGNORECASE):
+            return (
+                False,
+                "Per favore, chiedi spiegazioni o esempi invece di chiedere la soluzione",
+            )
+
     # Check if subject is school-related
     if subject:
         subject_lower = subject.lower()
@@ -228,6 +311,9 @@ def check_school_context(
     has_educational_intent = any(
         keyword in message_lower for keyword in EDUCATIONAL_KEYWORDS
     )
+    has_school_context = _has_school_context(message_lower, subject, history)
+    looks_like_student_answer = _looks_like_student_answer(message_lower)
+    looks_like_question = _looks_like_question(message_lower)
 
     if has_images:
         return True, "Valid"
@@ -235,7 +321,13 @@ def check_school_context(
     if not message_lower:
         return False, "Inserisci una domanda o allega un'immagine del compito"
 
-    if not has_educational_intent and len(message) > 50:
+    if (
+        not has_educational_intent
+        and len(message) > 50
+        and not (
+            has_school_context and (looks_like_student_answer or looks_like_question)
+        )
+    ):
         return (
             False,
             "Per favore, chiedi spiegazioni o esempi invece di inviare direttamente il compito",
@@ -536,6 +628,7 @@ async def prepare_chat_request(
     message: str,
     subject: Optional[str],
     images: list[UploadFile],
+    history: Optional[list[ChatHistoryMessage]] = None,
 ) -> tuple[str, bool, list[attachments.ProcessedImage], tuple[bool, str]]:
     processed_images = await validate_and_process_images(images)
     has_images = len(processed_images) > 0
@@ -548,7 +641,7 @@ async def prepare_chat_request(
         raise HTTPException(status_code=400, detail="Messaggio o immagine richiesti")
 
     is_valid, reason = check_school_context(
-        user_message, subject, has_images=has_images
+        user_message, subject, has_images=has_images, history=history
     )
     return user_message, has_images, processed_images, (is_valid, reason)
 
@@ -564,8 +657,9 @@ async def chat(
     """
     Main chat endpoint with safety guardrails. Accepts multipart form data with optional images.
     """
+    chat_history = parse_chat_history(history)
     user_message, has_images, processed_images, (is_valid, reason) = (
-        await prepare_chat_request(message, subject, images)
+        await prepare_chat_request(message, subject, images, chat_history)
     )
 
     if not is_valid:
@@ -577,7 +671,6 @@ async def chat(
         )
 
     system_prompt = build_system_prompt(grade_level, has_images=has_images)
-    chat_history = parse_chat_history(history)
     response_text = await call_llm(
         system_prompt, user_message, processed_images, chat_history
     )

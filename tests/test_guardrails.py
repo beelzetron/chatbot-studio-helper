@@ -2,6 +2,7 @@
 Enhanced tests for Study Helper Chatbot
 """
 from src.main import (
+    ChatHistoryMessage,
     check_school_context,
     build_system_prompt,
     PROMPT_INJECTION_PATTERNS,
@@ -91,6 +92,37 @@ class TestSchoolContextValidation:
         message = "Fammi il compito di matematica al posto mio"
         is_valid, reason = check_school_context(message)
         assert is_valid is False
+
+    def test_accepts_numbered_student_answer_in_school_context(self):
+        """Should allow a student answer submitted for feedback in an active school conversation."""
+        message = (
+            "2: un solo uomo al comando nell'impero, tante persone nella repubblia. "
+            "3: per spostare piu' velocemente le truppe"
+        )
+        history = [
+            ChatHistoryMessage(
+                role="assistant",
+                content=(
+                    "Qual è la differenza principale tra la Repubblica e l'Impero? "
+                    "Perché pensi che i romani costruissero tante strade?"
+                ),
+            )
+        ]
+
+        is_valid, reason = check_school_context(message, history=history)
+
+        assert is_valid is True
+        assert reason == "Valid"
+
+    def test_accepts_classroom_hypothetical_prompt(self):
+        """Classroom scaffolding with 'immagina' is not a jailbreak by itself."""
+        message = (
+            "Immagina di essere un generale romano: di cosa hai bisogno per viaggiare "
+            "veloce e sicuro?"
+        )
+        is_valid, reason = check_school_context(message, "storia")
+        assert is_valid is True
+        assert reason == "Valid"
 
 
 class TestNoSolutionPolicy:
