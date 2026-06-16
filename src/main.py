@@ -11,7 +11,7 @@ import re
 from typing import Any, AsyncIterator, Literal, Optional
 
 import httpx
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -762,6 +762,22 @@ async def client_debug_event(event: ClientDebugEvent):
         event.url,
         event.user_agent,
         event.details,
+    )
+    return {"ok": True}
+
+
+@app.get("/debug/client-event")
+async def client_debug_event_get(
+    event: str = Query(...),
+    session_id: Optional[str] = Query(None),
+    details: Optional[str] = Query(None),
+):
+    """GET-based debug breadcrumb for old browsers where sendBeacon is unreliable."""
+    logger.warning(
+        "client_debug_get event=%s session=%s details=%s",
+        event,
+        session_id,
+        details,
     )
     return {"ok": True}
 

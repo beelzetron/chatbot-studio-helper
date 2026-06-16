@@ -6,6 +6,20 @@ const sessionId = createClientId('client');
 type DebugDetails = Record<string, string | number | boolean | null | undefined>;
 
 export function reportClientEvent(event: string, details: DebugDetails = {}): void {
+  const compactDetails = JSON.stringify(details);
+
+  try {
+    const params = new URLSearchParams({
+      event,
+      session_id: sessionId,
+      details: compactDetails.slice(0, 1200),
+      t: String(Date.now()),
+    });
+    new Image().src = `${DEBUG_ENDPOINT}?${params.toString()}`;
+  } catch {
+    // Keep going to the POST fallbacks below.
+  }
+
   const payload = JSON.stringify({
     event,
     session_id: sessionId,
@@ -32,4 +46,26 @@ export function reportClientEvent(event: string, details: DebugDetails = {}): vo
   } catch {
     // Debug reporting must never affect chat behavior.
   }
+}
+
+export function installClientDebugHandlers(): void {
+  window.addEventListener('error', (event) => {
+    reportClientEvent('window_error', {
+      message: event.message,
+      source: event.filename,
+      line: event.lineno,
+      column: event.colno,
+    });
+  });
+
+  window.addEventListener('unhandledrejection', (event) => {
+    const reason = event.reason instanceof Error ? event.reason.message : String(event.reason);
+    reportClientEvent('unhandled_rejection', {
+      reason,
+    });
+  });
+
+  window.addEventListener('pagehide', () => {
+    reportClientEvent('pagehide');
+  });
 }

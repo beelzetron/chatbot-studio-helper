@@ -16,7 +16,7 @@ import {
   type UploadLimits,
 } from './types/chat';
 import { createClientId } from './utils/id';
-import { reportClientEvent } from './utils/clientDebug';
+import { installClientDebugHandlers, reportClientEvent } from './utils/clientDebug';
 
 const SUBJECTS = [
   { name: 'Matematica', icon: Calculator, color: 'bg-blue-500' },
@@ -87,6 +87,7 @@ function App() {
   }, [messages]);
 
   useEffect(() => {
+    installClientDebugHandlers();
     reportClientEvent('app_loaded', {
       online: navigator.onLine,
       service_worker_controlled: Boolean(navigator.serviceWorker?.controller),
