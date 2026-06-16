@@ -6,6 +6,7 @@ import type { ChatStreamEvent } from '../src/types/chat';
 
 vi.mock('../src/api/chatApi', () => ({
   chatApi: {
+    sendMessage: vi.fn(),
     sendMessageStream: vi.fn(),
   },
 }));
@@ -177,10 +178,10 @@ describe('useChat', () => {
   });
 
   it('includes attachment previews in user message', async () => {
-    mockStream([
-      { type: 'token', content: 'Ecco una spiegazione' },
-      { type: 'done', is_helpful: true },
-    ]);
+    mockedChatApi.sendMessage.mockResolvedValue({
+      response: 'Ecco una spiegazione',
+      is_helpful: true,
+    });
 
     const file = new File(['img'], 'test.jpg', { type: 'image/jpeg' });
     const { result } = renderHook(() => useChat());
@@ -194,5 +195,9 @@ describe('useChat', () => {
       expect(result.current.messages[0].attachments).toHaveLength(1);
       expect(result.current.messages[0].attachments?.[0].name).toBe('test.jpg');
     });
+    expect(mockedChatApi.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ images: [file] }),
+    );
+    expect(mockedChatApi.sendMessageStream).not.toHaveBeenCalled();
   });
 });

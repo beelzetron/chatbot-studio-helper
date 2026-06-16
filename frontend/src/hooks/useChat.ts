@@ -99,6 +99,23 @@ export function useChat() {
     };
 
     try {
+      if ((request.images?.length ?? 0) > 0) {
+        finalResponse = await chatApi.sendMessage(requestWithHistory);
+        setMessages((prev) =>
+          prev.map((message) =>
+            message.id === assistantId
+              ? {
+                  ...message,
+                  content: finalResponse.response,
+                  isStreaming: false,
+                  isWarning: finalResponse.safety_violation,
+                }
+              : message,
+          ),
+        );
+        return finalResponse;
+      }
+
       await chatApi.sendMessageStream(requestWithHistory, (event) => {
         if (event.type === 'token') {
           streamedContent += event.content;

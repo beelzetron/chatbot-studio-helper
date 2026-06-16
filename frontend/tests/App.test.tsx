@@ -5,6 +5,7 @@ import { chatApi } from '../src/api/chatApi';
 
 vi.mock('../src/api/chatApi', () => ({
   chatApi: {
+    sendMessage: vi.fn(),
     sendMessageStream: vi.fn(),
     getInfo: vi.fn(),
   },
@@ -16,6 +17,10 @@ function mockStreamResponse(response: string, isHelpful = true): void {
   mockedChatApi.sendMessageStream.mockImplementation(async (_request, onEvent) => {
     onEvent({ type: 'token', content: response });
     onEvent({ type: 'done', is_helpful: isHelpful });
+  });
+  mockedChatApi.sendMessage.mockResolvedValue({
+    response,
+    is_helpful: isHelpful,
   });
 }
 
@@ -175,14 +180,14 @@ describe('App', () => {
     await fireEvent.click(sendButton);
 
     await waitFor(() => {
-      expect(mockedChatApi.sendMessageStream).toHaveBeenCalledWith(
+      expect(mockedChatApi.sendMessage).toHaveBeenCalledWith(
         expect.objectContaining({
           message: '',
           images: expect.arrayContaining([expect.any(File)]),
         }),
-        expect.any(Function),
       );
     });
+    expect(mockedChatApi.sendMessageStream).not.toHaveBeenCalled();
     expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
   });
 
@@ -209,12 +214,11 @@ describe('App', () => {
       await fireEvent.click(screen.getByRole('button', { name: /invia/i }));
 
       await waitFor(() => {
-        expect(mockedChatApi.sendMessageStream).toHaveBeenCalledWith(
+        expect(mockedChatApi.sendMessage).toHaveBeenCalledWith(
           expect.objectContaining({
             message: '',
             images: expect.arrayContaining([file]),
           }),
-          expect.any(Function),
         );
       });
     } finally {
