@@ -5,17 +5,20 @@ Guardrail implementati per prevenire utilizzi impropri.
 """
 
 import json
+import logging
 import os
 import re
-from typing import AsyncIterator, Literal, Optional
+from typing import Any, AsyncIterator, Literal, Optional
 
 import httpx
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src import attachments
 from src.attachments import validate_and_process_images
+
+logger = logging.getLogger("study-helper")
 
 app = FastAPI(
     title="Study Helper Chatbot",
@@ -218,6 +221,15 @@ class ChatResponse(BaseModel):
     is_helpful: bool
     safety_violation: bool = False
     violation_reason: Optional[str] = None
+
+
+class ClientDebugEvent(BaseModel):
+    event: str
+    session_id: Optional[str] = None
+    url: Optional[str] = None
+    user_agent: Optional[str] = None
+    timestamp: Optional[str] = None
+    details: dict[str, Any] = Field(default_factory=dict)
 
 
 class ChatHistoryMessage(BaseModel):
@@ -738,6 +750,20 @@ async def chat_stream(
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "service": "study-helper-chatbot"}
+
+
+@app.post("/debug/client-event")
+async def client_debug_event(event: ClientDebugEvent):
+    """Log browser-side breadcrumbs for diagnosing device-specific crashes."""
+    logger.warning(
+        "client_debug event=%s session=%s url=%s user_agent=%s details=%s",
+        event.event,
+        event.session_id,
+        event.url,
+        event.user_agent,
+        event.details,
+    )
+    return {"ok": True}
 
 
 @app.get("/info")

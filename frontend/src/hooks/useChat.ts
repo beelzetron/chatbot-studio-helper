@@ -8,6 +8,7 @@ import type {
   MessageAttachment,
 } from '../types/chat';
 import { createClientId } from '../utils/id';
+import { reportClientEvent } from '../utils/clientDebug';
 
 const CONNECTION_ERROR =
   'Mi dispiace, ma ho avuto un problema di connessione. Per favore riprova.';
@@ -42,6 +43,11 @@ export function useChat() {
   const sendMessage = useCallback(async (request: ChatRequest) => {
     setIsLoading(true);
     setError(null);
+    reportClientEvent('chat_send_start', {
+      has_images: (request.images?.length ?? 0) > 0,
+      image_count: request.images?.length ?? 0,
+      message_chars: request.message.length,
+    });
 
     const messageAttachments: MessageAttachment[] =
       request.attachmentPreviews ?? (request.images ?? []).map((file) => ({ name: file.name }));
@@ -68,7 +74,14 @@ export function useChat() {
       history: request.history ?? buildConversationHistory(messages),
     };
 
+    reportClientEvent('chat_messages_append_start', {
+      has_images: (request.images?.length ?? 0) > 0,
+      prior_messages: messages.length,
+    });
     setMessages((prev) => [...prev, userMessage, assistantMessage]);
+    reportClientEvent('chat_messages_append_queued', {
+      has_images: (request.images?.length ?? 0) > 0,
+    });
 
     let streamedContent = '';
     let finalResponse: ChatResponse = {
@@ -79,6 +92,10 @@ export function useChat() {
     try {
       if ((request.images?.length ?? 0) > 0) {
         finalResponse = await chatApi.sendMessage(requestWithHistory);
+        reportClientEvent('chat_image_response_received', {
+          response_chars: finalResponse.response.length,
+          safety_violation: finalResponse.safety_violation ?? false,
+        });
         setMessages((prev) =>
           prev.map((message) =>
             message.id === assistantId
@@ -91,6 +108,9 @@ export function useChat() {
               : message,
           ),
         );
+        reportClientEvent('chat_image_response_update_queued', {
+          response_chars: finalResponse.response.length,
+        });
         return finalResponse;
       }
 

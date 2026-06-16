@@ -16,6 +16,7 @@ import {
   type UploadLimits,
 } from './types/chat';
 import { createClientId } from './utils/id';
+import { reportClientEvent } from './utils/clientDebug';
 
 const SUBJECTS = [
   { name: 'Matematica', icon: Calculator, color: 'bg-blue-500' },
@@ -77,7 +78,22 @@ function App() {
     const el = chatScrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
+    reportClientEvent('app_messages_rendered', {
+      message_count: messages.length,
+      last_role: messages[messages.length - 1]?.role ?? null,
+      last_chars: messages[messages.length - 1]?.content.length ?? 0,
+      last_streaming: messages[messages.length - 1]?.isStreaming ?? false,
+    });
   }, [messages]);
+
+  useEffect(() => {
+    reportClientEvent('app_loaded', {
+      online: navigator.onLine,
+      service_worker_controlled: Boolean(navigator.serviceWorker?.controller),
+      screen_width: window.screen.width,
+      screen_height: window.screen.height,
+    });
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -117,6 +133,14 @@ function App() {
   const addFiles = (files: FileList | null) => {
     if (!files || files.length === 0) return;
 
+    const selectedFiles = Array.from(files);
+    reportClientEvent('files_selected', {
+      count: selectedFiles.length,
+      total_bytes: selectedFiles.reduce((total, file) => total + file.size, 0),
+      first_size: selectedFiles[0]?.size ?? 0,
+      first_type: selectedFiles[0]?.type ?? 'unknown',
+    });
+
     setUploadError(null);
     const slotsLeft = uploadLimits.max_images - attachments.length;
     if (slotsLeft <= 0) {
@@ -126,7 +150,7 @@ function App() {
 
     const newAttachments: AttachmentPreview[] = [];
 
-    for (const file of Array.from(files).slice(0, slotsLeft)) {
+    for (const file of selectedFiles.slice(0, slotsLeft)) {
       if (!uploadLimits.allowed_types.includes(file.type)) {
         setUploadError('Formato non supportato. Usa JPEG, PNG o WebP.');
         continue;
@@ -144,6 +168,10 @@ function App() {
     if (newAttachments.length === 0) return;
 
     setAttachments((prev) => [...prev, ...newAttachments]);
+    reportClientEvent('files_accepted', {
+      count: newAttachments.length,
+      pending_count: attachments.length + newAttachments.length,
+    });
   };
 
   const removeAttachment = (id: string) => {
@@ -175,7 +203,15 @@ function App() {
       })),
     };
 
+    reportClientEvent('submit_start', {
+      image_count: attachments.length,
+      total_image_bytes: attachments.reduce((total, attachment) => total + attachment.file.size, 0),
+      message_chars: message.trim().length,
+    });
     await sendMessage(request);
+    reportClientEvent('submit_complete', {
+      image_count: attachments.length,
+    });
     setMessage('');
     setAttachments([]);
     setUploadError(null);
