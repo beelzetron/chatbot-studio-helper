@@ -60,6 +60,7 @@ export function useChat() {
       attachments: messageAttachments.length > 0 ? messageAttachments : undefined,
     };
 
+    const hasImages = (request.images?.length ?? 0) > 0;
     const assistantId = createClientId('message');
     const assistantMessage: Message = {
       id: assistantId,
@@ -67,6 +68,7 @@ export function useChat() {
       content: '',
       timestamp: new Date(),
       isStreaming: true,
+      renderAsPlainText: hasImages,
     };
 
     const requestWithHistory: ChatRequest = {
@@ -90,7 +92,7 @@ export function useChat() {
     };
 
     try {
-      if ((request.images?.length ?? 0) > 0) {
+      if (hasImages) {
         finalResponse = await chatApi.sendMessage(requestWithHistory);
         reportClientEvent('chat_image_response_received', {
           response_chars: finalResponse.response.length,

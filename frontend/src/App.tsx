@@ -384,7 +384,11 @@ function App() {
                         {msg.role === 'assistant' ? (
                           <div className="flex items-end gap-1">
                             {msg.content ? (
-                              <MarkdownContent content={msg.content} />
+                              msg.renderAsPlainText ? (
+                                <p className="whitespace-pre-wrap">{msg.content}</p>
+                              ) : (
+                                <MarkdownContent content={msg.content} />
+                              )
                             ) : null}
                             {msg.isStreaming && (
                               <span

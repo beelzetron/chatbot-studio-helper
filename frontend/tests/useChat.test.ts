@@ -194,6 +194,7 @@ describe('useChat', () => {
     await waitFor(() => {
       expect(result.current.messages[0].attachments).toHaveLength(1);
       expect(result.current.messages[0].attachments?.[0].name).toBe('test.jpg');
+      expect(result.current.messages[1].renderAsPlainText).toBe(true);
     });
     expect(mockedChatApi.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({ images: [file] }),
