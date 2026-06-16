@@ -188,7 +188,7 @@ describe('App', () => {
       );
     });
     expect(mockedChatApi.sendMessageStream).not.toHaveBeenCalled();
-    expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
   });
 
   it('sends an image when crypto.randomUUID is unavailable', async () => {

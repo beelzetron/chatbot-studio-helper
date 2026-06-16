@@ -70,7 +70,7 @@ function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
-  const { messages, isLoading, sendMessage, clearMessages, revokePreviewUrl } = useChat();
+  const { messages, isLoading, sendMessage, clearMessages } = useChat();
   const maxImageSizeLabel = formatBytes(uploadLimits.max_bytes_per_image);
 
   useEffect(() => {
@@ -138,7 +138,6 @@ function App() {
       newAttachments.push({
         id: createClientId('attachment'),
         file,
-        previewUrl: URL.createObjectURL(file),
       });
     }
 
@@ -148,16 +147,11 @@ function App() {
   };
 
   const removeAttachment = (id: string) => {
-    setAttachments((prev) => {
-      const item = prev.find((a) => a.id === id);
-      if (item) revokePreviewUrl(item.previewUrl);
-      return prev.filter((a) => a.id !== id);
-    });
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
     setUploadError(null);
   };
 
   const clearPendingAttachments = () => {
-    attachments.forEach((a) => revokePreviewUrl(a.previewUrl));
     setAttachments([]);
   };
 
@@ -177,7 +171,6 @@ function App() {
       grade_level: selectedGradeLevel,
       images: attachments.map((a) => a.file),
       attachmentPreviews: attachments.map((a) => ({
-        previewUrl: a.previewUrl,
         name: a.file.name,
       })),
     };
@@ -340,13 +333,14 @@ function App() {
                         )}
                         {msg.attachments && msg.attachments.length > 0 && (
                           <div className="flex flex-wrap gap-2 mb-2">
-                            {msg.attachments.map((attachment) => (
-                              <img
-                                key={attachment.previewUrl}
-                                src={attachment.previewUrl}
-                                alt={attachment.name}
-                                className="h-24 w-24 object-cover rounded-lg border border-gray-200"
-                              />
+                            {msg.attachments.map((attachment, index) => (
+                              <div
+                                key={`${attachment.name}-${index}`}
+                                className="flex max-w-full items-center gap-2 rounded-lg border border-white/30 bg-white/15 px-2.5 py-2 text-xs"
+                              >
+                                <Paperclip className="h-4 w-4 shrink-0" aria-hidden="true" />
+                                <span className="truncate">{attachment.name}</span>
+                              </div>
                             ))}
                           </div>
                         )}
@@ -381,12 +375,12 @@ function App() {
                 {attachments.length > 0 && (
                   <div className="flex flex-wrap gap-2">
                     {attachments.map((attachment) => (
-                      <div key={attachment.id} className="relative">
-                        <img
-                          src={attachment.previewUrl}
-                          alt={attachment.file.name}
-                          className="h-16 w-16 object-cover rounded-lg border border-white/20"
-                        />
+                      <div
+                        key={attachment.id}
+                        className="relative flex max-w-full items-center gap-2 rounded-lg border border-white/20 bg-white/10 px-3 py-2 pr-7 text-sm text-white"
+                      >
+                        <Paperclip className="h-4 w-4 shrink-0" aria-hidden="true" />
+                        <span className="max-w-[12rem] truncate">{attachment.file.name}</span>
                         <button
                           type="button"
                           onClick={() => removeAttachment(attachment.id)}

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback } from 'react';
 import { chatApi } from '../api/chatApi';
 import type {
   ChatHistoryMessage,
@@ -38,35 +38,13 @@ export function useChat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const previewUrlsRef = useRef<Set<string>>(new Set());
-
-  const trackPreviewUrl = useCallback((url: string) => {
-    previewUrlsRef.current.add(url);
-  }, []);
-
-  const revokePreviewUrl = useCallback((url: string) => {
-    URL.revokeObjectURL(url);
-    previewUrlsRef.current.delete(url);
-  }, []);
-
-  useEffect(() => {
-    const urls = previewUrlsRef.current;
-    return () => {
-      urls.forEach((url) => URL.revokeObjectURL(url));
-      urls.clear();
-    };
-  }, []);
 
   const sendMessage = useCallback(async (request: ChatRequest) => {
     setIsLoading(true);
     setError(null);
 
     const messageAttachments: MessageAttachment[] =
-      request.attachmentPreviews ?? (request.images ?? []).map((file) => {
-        const previewUrl = URL.createObjectURL(file);
-        return { previewUrl, name: file.name };
-      });
-    messageAttachments.forEach((attachment) => trackPreviewUrl(attachment.previewUrl));
+      request.attachmentPreviews ?? (request.images ?? []).map((file) => ({ name: file.name }));
 
     const userMessage: Message = {
       id: createClientId('message'),
@@ -185,11 +163,9 @@ export function useChat() {
     } finally {
       setIsLoading(false);
     }
-  }, [messages, trackPreviewUrl]);
+  }, [messages]);
 
   const clearMessages = useCallback(() => {
-    previewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
-    previewUrlsRef.current.clear();
     setMessages([]);
     setError(null);
   }, []);
@@ -200,7 +176,5 @@ export function useChat() {
     error,
     sendMessage,
     clearMessages,
-    trackPreviewUrl,
-    revokePreviewUrl,
   };
 }
