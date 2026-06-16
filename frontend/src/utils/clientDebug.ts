@@ -2,6 +2,7 @@ import { createClientId } from './id';
 
 const DEBUG_ENDPOINT = '/api/debug/client-event';
 const sessionId = createClientId('client');
+const pendingPixels: HTMLImageElement[] = [];
 
 type DebugDetails = Record<string, string | number | boolean | null | undefined>;
 
@@ -15,7 +16,15 @@ export function reportClientEvent(event: string, details: DebugDetails = {}): vo
       details: compactDetails.slice(0, 1200),
       t: String(Date.now()),
     });
-    new Image().src = `${DEBUG_ENDPOINT}?${params.toString()}`;
+    const pixel = new Image();
+    pendingPixels.push(pixel);
+    pixel.onload = pixel.onerror = () => {
+      const index = pendingPixels.indexOf(pixel);
+      if (index >= 0) {
+        pendingPixels.splice(index, 1);
+      }
+    };
+    pixel.src = `${DEBUG_ENDPOINT}?${params.toString()}`;
   } catch {
     // Keep going to the POST fallbacks below.
   }

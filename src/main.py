@@ -11,7 +11,7 @@ import re
 from typing import Any, AsyncIterator, Literal, Optional
 
 import httpx
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -753,15 +753,21 @@ async def health_check():
 
 
 @app.post("/debug/client-event")
-async def client_debug_event(event: ClientDebugEvent):
+async def client_debug_event(request: Request):
     """Log browser-side breadcrumbs for diagnosing device-specific crashes."""
+    raw_body = await request.body()
+    try:
+        data = json.loads(raw_body.decode("utf-8")) if raw_body else {}
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        data = {"raw": raw_body[:1200].decode("utf-8", errors="replace")}
+
     logger.warning(
         "client_debug event=%s session=%s url=%s user_agent=%s details=%s",
-        event.event,
-        event.session_id,
-        event.url,
-        event.user_agent,
-        event.details,
+        data.get("event"),
+        data.get("session_id"),
+        data.get("url"),
+        data.get("user_agent"),
+        data.get("details", data),
     )
     return {"ok": True}
 
