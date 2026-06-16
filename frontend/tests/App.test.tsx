@@ -162,7 +162,7 @@ describe('App', () => {
   });
 
   it('enables send with image attachment only', async () => {
-    mockStreamResponse('Help with your homework photo');
+    mockStreamResponse('### Foto\n\n- Punto con **grassetto**');
 
     render(<App />);
 
@@ -189,6 +189,8 @@ describe('App', () => {
     });
     expect(mockedChatApi.sendMessageStream).not.toHaveBeenCalled();
     expect(URL.createObjectURL).not.toHaveBeenCalled();
+    expect(await screen.findByRole('heading', { level: 3 })).toHaveTextContent('Foto');
+    expect(screen.getByText('grassetto').tagName).toBe('STRONG');
   });
 
   it('sends an image when crypto.randomUUID is unavailable', async () => {

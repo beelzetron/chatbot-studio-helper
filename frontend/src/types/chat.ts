@@ -47,7 +47,7 @@ export interface Message {
   timestamp: Date;
   isWarning?: boolean;
   isStreaming?: boolean;
-  renderAsPlainText?: boolean;
+  renderAsSafeMarkdown?: boolean;
   attachments?: MessageAttachment[];
 }
 

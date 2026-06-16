@@ -15,4 +15,19 @@ describe('MarkdownContent', () => {
     expect(katex).toBeInTheDocument();
     expect(katex?.parentElement?.classList.contains('katex-display')).toBe(true);
   });
+
+  it('renders basic markdown in safe mode without KaTeX', () => {
+    render(
+      <MarkdownContent
+        safeMode
+        content={'### Titolo\n\n- Primo punto con **grassetto**\n- Secondo punto con `codice`\n\nFormula $a^2$'}
+      />,
+    );
+
+    expect(screen.getByRole('heading', { level: 3 })).toHaveTextContent('Titolo');
+    expect(screen.getByText('grassetto').tagName).toBe('STRONG');
+    expect(screen.getAllByRole('listitem')).toHaveLength(2);
+    expect(screen.getByText('codice').tagName).toBe('CODE');
+    expect(document.querySelector('.katex')).not.toBeInTheDocument();
+  });
 });

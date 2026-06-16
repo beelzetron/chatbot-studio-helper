@@ -68,7 +68,7 @@ export function useChat() {
       content: '',
       timestamp: new Date(),
       isStreaming: true,
-      renderAsPlainText: hasImages,
+      renderAsSafeMarkdown: hasImages,
     };
 
     const requestWithHistory: ChatRequest = {
