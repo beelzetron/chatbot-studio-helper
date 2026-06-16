@@ -7,6 +7,7 @@ import type {
   Message,
   MessageAttachment,
 } from '../types/chat';
+import { createClientId } from '../utils/id';
 
 const CONNECTION_ERROR =
   'Mi dispiace, ma ho avuto un problema di connessione. Per favore riprova.';
@@ -67,14 +68,14 @@ export function useChat() {
     });
 
     const userMessage: Message = {
-      id: crypto.randomUUID(),
+      id: createClientId('message'),
       role: 'user',
       content: request.message,
       timestamp: new Date(),
       attachments: messageAttachments.length > 0 ? messageAttachments : undefined,
     };
 
-    const assistantId = crypto.randomUUID();
+    const assistantId = createClientId('message');
     const assistantMessage: Message = {
       id: assistantId,
       role: 'assistant',

@@ -15,6 +15,7 @@ import {
   GRADE_LEVELS,
   type UploadLimits,
 } from './types/chat';
+import { createClientId } from './utils/id';
 
 const SUBJECTS = [
   { name: 'Matematica', icon: Calculator, color: 'bg-blue-500' },
@@ -135,7 +136,7 @@ function App() {
         continue;
       }
       newAttachments.push({
-        id: crypto.randomUUID(),
+        id: createClientId('attachment'),
         file,
         previewUrl: URL.createObjectURL(file),
       });

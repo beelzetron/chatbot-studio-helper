@@ -185,6 +185,45 @@ describe('App', () => {
     });
   });
 
+  it('sends an image when crypto.randomUUID is unavailable', async () => {
+    mockStreamResponse('Help with your homework photo');
+    const originalCrypto = globalThis.crypto;
+
+    Object.defineProperty(globalThis, 'crypto', {
+      configurable: true,
+      value: {
+        getRandomValues: vi.fn((array: Uint8Array) => {
+          array.fill(7);
+          return array;
+        }),
+      },
+    });
+
+    try {
+      render(<App />);
+
+      const fileInput = document.querySelector('input[type="file"]:not([capture])') as HTMLInputElement;
+      const file = new File(['photo'], 'homework.jpg', { type: 'image/jpeg' });
+      await fireEvent.change(fileInput, { target: { files: [file] } });
+      await fireEvent.click(screen.getByRole('button', { name: /invia/i }));
+
+      await waitFor(() => {
+        expect(mockedChatApi.sendMessageStream).toHaveBeenCalledWith(
+          expect.objectContaining({
+            message: '',
+            images: expect.arrayContaining([file]),
+          }),
+          expect.any(Function),
+        );
+      });
+    } finally {
+      Object.defineProperty(globalThis, 'crypto', {
+        configurable: true,
+        value: originalCrypto,
+      });
+    }
+  });
+
   it('uses upload limits from service info', async () => {
     mockedChatApi.getInfo.mockResolvedValue({
       name: 'Study Helper Chatbot',
