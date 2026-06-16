@@ -162,7 +162,7 @@ describe('App', () => {
   });
 
   it('enables send with image attachment only', async () => {
-    mockStreamResponse('### Foto\n\n- Punto con **grassetto**');
+    mockStreamResponse('### Foto\n\n- Punto con **grassetto** e formula $a^2 + b^2 = c^2$.');
 
     render(<App />);
 
@@ -176,6 +176,8 @@ describe('App', () => {
     await waitFor(() => {
       expect(sendButton).not.toBeDisabled();
     });
+    expect(URL.createObjectURL).toHaveBeenCalledWith(file);
+    expect(screen.getByAltText('homework.jpg')).toBeInTheDocument();
 
     await fireEvent.click(sendButton);
 
@@ -188,9 +190,9 @@ describe('App', () => {
       );
     });
     expect(mockedChatApi.sendMessageStream).not.toHaveBeenCalled();
-    expect(URL.createObjectURL).not.toHaveBeenCalled();
     expect(await screen.findByRole('heading', { level: 3 })).toHaveTextContent('Foto');
     expect(screen.getByText('grassetto').tagName).toBe('STRONG');
+    expect(document.querySelector('.katex')).toBeInTheDocument();
   });
 
   it('sends an image when crypto.randomUUID is unavailable', async () => {
@@ -327,5 +329,6 @@ describe('App', () => {
     await fireEvent.click(removeButton);
 
     expect(screen.getByRole('button', { name: /invia/i })).toBeDisabled();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:mock-preview-url');
   });
 });

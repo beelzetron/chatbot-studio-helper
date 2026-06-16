@@ -38,6 +38,7 @@ export interface ServiceInfo {
 
 export interface MessageAttachment {
   name: string;
+  previewUrl?: string;
 }
 
 export interface Message {
@@ -64,6 +65,7 @@ export type ChatStreamEvent =
 export interface AttachmentPreview {
   id: string;
   file: File;
+  previewUrl: string;
 }
 
 export interface Subject {

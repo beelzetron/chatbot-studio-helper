@@ -59,6 +59,16 @@ function normalizeUploadLimits(uploadLimits?: UploadLimits): UploadLimits {
   };
 }
 
+function supportsFullMarkdownRendering(): boolean {
+  try {
+    new RegExp('(?<=a)b');
+    new RegExp('(?<letter>a)');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function App() {
   const [message, setMessage] = useState('');
   const [selectedSubject, setSelectedSubject] = useState<string>('');
@@ -71,8 +81,20 @@ function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  const previewUrlsRef = useRef<Set<string>>(new Set());
+  const canRenderFullMarkdown = useRef(supportsFullMarkdownRendering()).current;
   const { messages, isLoading, sendMessage, clearMessages } = useChat();
   const maxImageSizeLabel = formatBytes(uploadLimits.max_bytes_per_image);
+
+  const revokePreviewUrl = (previewUrl: string) => {
+    URL.revokeObjectURL(previewUrl);
+    previewUrlsRef.current.delete(previewUrl);
+  };
+
+  const revokeAllPreviewUrls = () => {
+    previewUrlsRef.current.forEach((previewUrl) => URL.revokeObjectURL(previewUrl));
+    previewUrlsRef.current.clear();
+  };
 
   useEffect(() => {
     const el = chatScrollRef.current;
@@ -93,8 +115,11 @@ function App() {
       service_worker_controlled: Boolean(navigator.serviceWorker?.controller),
       screen_width: window.screen.width,
       screen_height: window.screen.height,
+      full_markdown_supported: canRenderFullMarkdown,
     });
   }, []);
+
+  useEffect(() => revokeAllPreviewUrls, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -160,9 +185,12 @@ function App() {
         setUploadError(`Immagine troppo grande (max ${maxImageSizeLabel}).`);
         continue;
       }
+      const previewUrl = URL.createObjectURL(file);
+      previewUrlsRef.current.add(previewUrl);
       newAttachments.push({
         id: createClientId('attachment'),
         file,
+        previewUrl,
       });
     }
 
@@ -176,16 +204,26 @@ function App() {
   };
 
   const removeAttachment = (id: string) => {
-    setAttachments((prev) => prev.filter((a) => a.id !== id));
+    setAttachments((prev) => {
+      const attachment = prev.find((a) => a.id === id);
+      if (attachment) {
+        revokePreviewUrl(attachment.previewUrl);
+      }
+      return prev.filter((a) => a.id !== id);
+    });
     setUploadError(null);
   };
 
-  const clearPendingAttachments = () => {
+  const clearPendingAttachments = (revokeUrls = true) => {
+    if (revokeUrls) {
+      attachments.forEach((attachment) => revokePreviewUrl(attachment.previewUrl));
+    }
     setAttachments([]);
   };
 
   const handleClearChat = () => {
-    clearPendingAttachments();
+    revokeAllPreviewUrls();
+    clearPendingAttachments(false);
     clearMessages();
     setUploadError(null);
   };
@@ -201,6 +239,7 @@ function App() {
       images: attachments.map((a) => a.file),
       attachmentPreviews: attachments.map((a) => ({
         name: a.file.name,
+        previewUrl: a.previewUrl,
       })),
     };
 
@@ -214,7 +253,7 @@ function App() {
       image_count: attachments.length,
     });
     setMessage('');
-    setAttachments([]);
+    clearPendingAttachments(false);
     setUploadError(null);
   };
 
@@ -373,9 +412,17 @@ function App() {
                             {msg.attachments.map((attachment, index) => (
                               <div
                                 key={`${attachment.name}-${index}`}
-                                className="flex max-w-full items-center gap-2 rounded-lg border border-white/30 bg-white/15 px-2.5 py-2 text-xs"
+                                className="flex max-w-full items-center gap-2 rounded-lg border border-white/30 bg-white/15 p-1.5 pr-2.5 text-xs"
                               >
-                                <Paperclip className="h-4 w-4 shrink-0" aria-hidden="true" />
+                                {attachment.previewUrl ? (
+                                  <img
+                                    src={attachment.previewUrl}
+                                    alt={attachment.name}
+                                    className="h-12 w-12 rounded-md object-cover"
+                                  />
+                                ) : (
+                                  <Paperclip className="h-4 w-4 shrink-0" aria-hidden="true" />
+                                )}
                                 <span className="truncate">{attachment.name}</span>
                               </div>
                             ))}
@@ -386,7 +433,7 @@ function App() {
                             {msg.content ? (
                               <MarkdownContent
                                 content={msg.content}
-                                safeMode={msg.renderAsSafeMarkdown}
+                                safeMode={msg.renderAsSafeMarkdown && !canRenderFullMarkdown}
                               />
                             ) : null}
                             {msg.isStreaming && (
@@ -417,9 +464,13 @@ function App() {
                     {attachments.map((attachment) => (
                       <div
                         key={attachment.id}
-                        className="relative flex max-w-full items-center gap-2 rounded-lg border border-white/20 bg-white/10 px-3 py-2 pr-7 text-sm text-white"
+                        className="relative flex max-w-full items-center gap-2 rounded-lg border border-white/20 bg-white/10 p-1.5 pr-7 text-sm text-white"
                       >
-                        <Paperclip className="h-4 w-4 shrink-0" aria-hidden="true" />
+                        <img
+                          src={attachment.previewUrl}
+                          alt={attachment.file.name}
+                          className="h-12 w-12 rounded-md object-cover"
+                        />
                         <span className="max-w-[12rem] truncate">{attachment.file.name}</span>
                         <button
                           type="button"
