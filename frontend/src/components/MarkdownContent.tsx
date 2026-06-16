@@ -63,6 +63,46 @@ function getHeading(line: string): { level: 1 | 2 | 3 | 4 | 5 | 6; text: string 
   return { level: level as 1 | 2 | 3 | 4 | 5 | 6, text: line.slice(level + 1).trim() };
 }
 
+function parseTableRow(line: string): string[] {
+  let value = line.trim();
+  if (value.startsWith('|')) {
+    value = value.slice(1);
+  }
+  if (value.endsWith('|')) {
+    value = value.slice(0, -1);
+  }
+
+  return value.split('|').map((cell) => cell.trim());
+}
+
+function isTableSeparator(line: string): boolean {
+  const cells = parseTableRow(line);
+  if (cells.length < 2) {
+    return false;
+  }
+
+  return cells.every((cell) => {
+    let hyphenCount = 0;
+    for (const character of cell) {
+      if (character === '-') {
+        hyphenCount += 1;
+      } else if (character !== ':' && character !== ' ') {
+        return false;
+      }
+    }
+    return hyphenCount > 0;
+  });
+}
+
+function isTableStart(lines: string[], index: number): boolean {
+  if (index + 1 >= lines.length || !lines[index].includes('|')) {
+    return false;
+  }
+
+  const headerCells = parseTableRow(lines[index]);
+  return headerCells.length >= 2 && isTableSeparator(lines[index + 1]);
+}
+
 function renderInlineMarkdown(text: string): ReactNode[] {
   const nodes: ReactNode[] = [];
   let index = 0;
@@ -179,6 +219,45 @@ function renderSafeMarkdown(content: string): ReactNode[] {
       continue;
     }
 
+    if (isTableStart(lines, index)) {
+      const headers = parseTableRow(line);
+      const rows: string[][] = [];
+      index += 2;
+
+      while (index < lines.length && lines[index].includes('|') && lines[index].trim()) {
+        const row = parseTableRow(lines[index]);
+        if (row.length > 1) {
+          rows.push(row);
+        }
+        index += 1;
+      }
+
+      blocks.push(
+        <div key={`block-${key}`} className="overflow-x-auto">
+          <table>
+            <thead>
+              <tr>
+                {headers.map((header, headerIndex) => (
+                  <th key={headerIndex}>{renderInlineMarkdown(header)}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, rowIndex) => (
+                <tr key={rowIndex}>
+                  {headers.map((_, cellIndex) => (
+                    <td key={cellIndex}>{renderInlineMarkdown(row[cellIndex] ?? '')}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>,
+      );
+      key += 1;
+      continue;
+    }
+
     const firstUnordered = getUnorderedListText(line.trimStart());
     if (firstUnordered !== null) {
       const items: string[] = [];
@@ -249,6 +328,7 @@ function renderSafeMarkdown(content: string): ReactNode[] {
         !nextTrimmed ||
         nextTrimmed.startsWith('```') ||
         getHeading(nextLine.trimStart()) ||
+        isTableStart(lines, index) ||
         isListMarker(nextLine) ||
         nextTrimmed.startsWith('> ')
       ) {

@@ -35,4 +35,23 @@ describe('MarkdownContent', () => {
     expect(screen.getByText(/Formula \$a\^2\$/)).toBeInTheDocument();
     expect(document.querySelector('.katex')).not.toBeInTheDocument();
   });
+
+  it('renders markdown tables in safe mode without KaTeX', () => {
+    render(
+      <MarkdownContent
+        safeMode
+        content={
+          '| Passo | Cosa fare | Formula |\n| --- | --- | --- |\n| 1 | Trova **base** | $b$ |\n| 2 | Calcola `area` | $b \\times h$ |'
+        }
+      />,
+    );
+
+    expect(screen.getByRole('table')).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Passo' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Cosa fare' })).toBeInTheDocument();
+    expect(screen.getByText('base').tagName).toBe('STRONG');
+    expect(screen.getByText('area').tagName).toBe('CODE');
+    expect(screen.getByText(/\$b \\times h\$/)).toBeInTheDocument();
+    expect(document.querySelector('.katex')).not.toBeInTheDocument();
+  });
 });
