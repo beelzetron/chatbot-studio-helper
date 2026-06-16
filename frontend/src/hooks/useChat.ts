@@ -61,11 +61,12 @@ export function useChat() {
     setIsLoading(true);
     setError(null);
 
-    const messageAttachments: MessageAttachment[] = (request.images ?? []).map((file) => {
-      const previewUrl = URL.createObjectURL(file);
-      trackPreviewUrl(previewUrl);
-      return { previewUrl, name: file.name };
-    });
+    const messageAttachments: MessageAttachment[] =
+      request.attachmentPreviews ?? (request.images ?? []).map((file) => {
+        const previewUrl = URL.createObjectURL(file);
+        return { previewUrl, name: file.name };
+      });
+    messageAttachments.forEach((attachment) => trackPreviewUrl(attachment.previewUrl));
 
     const userMessage: Message = {
       id: createClientId('message'),

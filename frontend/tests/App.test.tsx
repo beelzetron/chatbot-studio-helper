@@ -183,6 +183,7 @@ describe('App', () => {
         expect.any(Function),
       );
     });
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
   });
 
   it('sends an image when crypto.randomUUID is unavailable', async () => {

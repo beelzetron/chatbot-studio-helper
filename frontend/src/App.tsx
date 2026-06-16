@@ -176,11 +176,15 @@ function App() {
       subject: selectedSubject || undefined,
       grade_level: selectedGradeLevel,
       images: attachments.map((a) => a.file),
+      attachmentPreviews: attachments.map((a) => ({
+        previewUrl: a.previewUrl,
+        name: a.file.name,
+      })),
     };
 
     await sendMessage(request);
     setMessage('');
-    clearPendingAttachments();
+    setAttachments([]);
     setUploadError(null);
   };
 

@@ -6,6 +6,7 @@ export interface ChatRequest {
   grade_level?: GradeLevel;
   history?: ChatHistoryMessage[];
   images?: File[];
+  attachmentPreviews?: MessageAttachment[];
 }
 
 export interface ChatHistoryMessage {
