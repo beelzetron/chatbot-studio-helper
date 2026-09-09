@@ -1,8 +1,10 @@
 """Tests for homework image upload and multimodal LLM integration."""
 
 import io
-from unittest.mock import AsyncMock, MagicMock, patch
+import json
+from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 from fastapi import HTTPException
 from PIL import Image
@@ -108,20 +110,26 @@ class TestImageGuardrails:
 
 class TestCallLlmMultimodal:
     @pytest.mark.asyncio
-    async def test_call_llm_sends_multimodal_payload(self):
+    async def test_call_llm_sends_multimodal_payload(self, monkeypatch):
         images = [ProcessedImage(mime_type="image/jpeg", base64_data="abc123")]
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {
-            "choices": [{"message": {"content": "Spiegazione"}}]
-        }
 
-        with patch("src.main.httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.post = AsyncMock(return_value=mock_response)
-            result = await call_llm("system", "user msg", images)
+        captured: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured.append(request)
+            return httpx.Response(
+                200, json={"choices": [{"message": {"content": "Spiegazione"}}]}
+            )
+
+        monkeypatch.setattr(
+            "src.main._llm_client",
+            httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+
+        result = await call_llm("system", "user msg", images)
 
         assert result == "Spiegazione"
-        call_kwargs = mock_client.return_value.__aenter__.return_value.post.call_args.kwargs
-        user_content = call_kwargs["json"]["messages"][1]["content"]
+        payload = json.loads(captured[0].content.decode())
+        user_content = payload["messages"][1]["content"]
         assert isinstance(user_content, list)
         assert user_content[1]["type"] == "image_url"
