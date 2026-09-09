@@ -47,14 +47,16 @@ class TestMainLlmAuth:
         return captured
 
     async def test_api_key_sent_as_bearer(self, monkeypatch, transport_capturing):
-        monkeypatch.setattr(main, "LLM_API_KEY", "sk-secret-main")
+        monkeypatch.setattr(main, "LLM_API_KEY", "sk-test-main-123")
+        monkeypatch.setattr(main, "LLM_MODEL", "explicit-model")
 
         result = await call_llm("system", "user msg")
         assert result == "ok"
-        assert transport_capturing[0].headers["authorization"] == "Bearer sk-secret-main"
+        assert transport_capturing[0].headers["authorization"] == "Bearer sk-test-main-123"
 
     async def test_no_api_key_means_no_auth_header(self, monkeypatch, transport_capturing):
         monkeypatch.setattr(main, "LLM_API_KEY", "")
+        monkeypatch.setattr(main, "LLM_MODEL", "explicit-model")
 
         await call_llm("system", "user msg")
         assert "authorization" not in transport_capturing[0].headers

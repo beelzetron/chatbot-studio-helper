@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
   BookOpen, Send, Trash2, Info, AlertCircle, Calculator, Book, Clock,
   FlaskConical, Globe, Languages, Palette, Music, Activity, Cpu,
@@ -6,15 +6,17 @@ import {
 } from 'lucide-react';
 import { MarkdownContent } from './components/MarkdownContent';
 import { useChat } from './hooks/useChat';
+import { chatApi } from './api/chatApi';
 import {
-  ALLOWED_IMAGE_TYPES,
-  MAX_IMAGE_BYTES,
-  MAX_IMAGE_COUNT,
+  DEFAULT_UPLOAD_LIMITS,
   type AttachmentPreview,
   type ChatRequest,
   type GradeLevel,
   GRADE_LEVELS,
+  type UploadLimits,
 } from './types/chat';
+import { createClientId } from './utils/id';
+import { installClientDebugHandlers, reportClientEvent } from './utils/clientDebug';
 
 const SUBJECTS = [
   { name: 'Matematica', icon: Calculator, color: 'bg-blue-500' },
@@ -30,6 +32,43 @@ const SUBJECTS = [
   { name: 'Informatica', icon: Cpu, color: 'bg-cyan-500' },
 ];
 
+function formatBytes(bytes: number): string {
+  const mib = bytes / (1024 * 1024);
+  return `${Number.isInteger(mib) ? mib : mib.toFixed(1)} MB`;
+}
+
+function normalizeUploadLimits(uploadLimits?: UploadLimits): UploadLimits {
+  if (!uploadLimits) {
+    return DEFAULT_UPLOAD_LIMITS;
+  }
+
+  return {
+    max_images:
+      uploadLimits.max_images > 0
+        ? uploadLimits.max_images
+        : DEFAULT_UPLOAD_LIMITS.max_images,
+    max_bytes_per_image:
+      uploadLimits.max_bytes_per_image > 0
+        ? uploadLimits.max_bytes_per_image
+        : DEFAULT_UPLOAD_LIMITS.max_bytes_per_image,
+    max_pixels_per_image: uploadLimits.max_pixels_per_image,
+    allowed_types:
+      uploadLimits.allowed_types.length > 0
+        ? uploadLimits.allowed_types
+        : DEFAULT_UPLOAD_LIMITS.allowed_types,
+  };
+}
+
+function supportsFullMarkdownRendering(): boolean {
+  try {
+    new RegExp('(?<=a)b');
+    new RegExp('(?<letter>a)');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function App() {
   const [message, setMessage] = useState('');
   const [selectedSubject, setSelectedSubject] = useState<string>('');
@@ -37,61 +76,154 @@ function App() {
   const [showInfo, setShowInfo] = useState(false);
   const [attachments, setAttachments] = useState<AttachmentPreview[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadLimits, setUploadLimits] = useState<UploadLimits>(DEFAULT_UPLOAD_LIMITS);
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
-  const { messages, isLoading, sendMessage, clearMessages, revokePreviewUrl } = useChat();
+  const chatScrollRef = useRef<HTMLDivElement>(null);
+  const previewUrlsRef = useRef<Set<string>>(new Set());
+  const canRenderFullMarkdown = useRef(supportsFullMarkdownRendering()).current;
+  const { messages, isLoading, sendMessage, clearMessages } = useChat();
+  const maxImageSizeLabel = formatBytes(uploadLimits.max_bytes_per_image);
+
+  const revokePreviewUrl = (previewUrl: string) => {
+    URL.revokeObjectURL(previewUrl);
+    previewUrlsRef.current.delete(previewUrl);
+  };
+
+  const revokeAllPreviewUrls = () => {
+    previewUrlsRef.current.forEach((previewUrl) => URL.revokeObjectURL(previewUrl));
+    previewUrlsRef.current.clear();
+  };
+
+  useEffect(() => {
+    const el = chatScrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    reportClientEvent('app_messages_rendered', {
+      message_count: messages.length,
+      last_role: messages[messages.length - 1]?.role ?? null,
+      last_chars: messages[messages.length - 1]?.content.length ?? 0,
+      last_streaming: messages[messages.length - 1]?.isStreaming ?? false,
+    });
+  }, [messages]);
+
+  useEffect(() => {
+    installClientDebugHandlers();
+    reportClientEvent('app_loaded', {
+      online: navigator.onLine,
+      service_worker_controlled: Boolean(navigator.serviceWorker?.controller),
+      screen_width: window.screen.width,
+      screen_height: window.screen.height,
+      full_markdown_supported: canRenderFullMarkdown,
+    });
+  }, []);
+
+  useEffect(() => revokeAllPreviewUrls, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    chatApi.getInfo()
+      .then((info) => {
+        if (isMounted) {
+          setUploadLimits(normalizeUploadLimits(info.uploads));
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setUploadLimits(DEFAULT_UPLOAD_LIMITS);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   const canSend = !isLoading && (message.trim().length > 0 || attachments.length > 0);
 
   const addFiles = (files: FileList | null) => {
     if (!files || files.length === 0) return;
 
+    const selectedFiles = Array.from(files);
+    reportClientEvent('files_selected', {
+      count: selectedFiles.length,
+      total_bytes: selectedFiles.reduce((total, file) => total + file.size, 0),
+      first_size: selectedFiles[0]?.size ?? 0,
+      first_type: selectedFiles[0]?.type ?? 'unknown',
+    });
+
     setUploadError(null);
-    const slotsLeft = MAX_IMAGE_COUNT - attachments.length;
+    const slotsLeft = uploadLimits.max_images - attachments.length;
     if (slotsLeft <= 0) {
-      setUploadError(`Massimo ${MAX_IMAGE_COUNT} immagini per messaggio`);
+      setUploadError(`Massimo ${uploadLimits.max_images} immagini per messaggio`);
       return;
     }
 
     const newAttachments: AttachmentPreview[] = [];
 
-    for (const file of Array.from(files).slice(0, slotsLeft)) {
-      if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+    for (const file of selectedFiles.slice(0, slotsLeft)) {
+      if (!uploadLimits.allowed_types.includes(file.type)) {
         setUploadError('Formato non supportato. Usa JPEG, PNG o WebP.');
         continue;
       }
-      if (file.size > MAX_IMAGE_BYTES) {
-        setUploadError('Immagine troppo grande (max 5 MB).');
+      if (file.size > uploadLimits.max_bytes_per_image) {
+        setUploadError(`Immagine troppo grande (max ${maxImageSizeLabel}).`);
         continue;
       }
+      const previewUrl = URL.createObjectURL(file);
+      previewUrlsRef.current.add(previewUrl);
       newAttachments.push({
-        id: crypto.randomUUID(),
+        id: createClientId('attachment'),
         file,
-        previewUrl: URL.createObjectURL(file),
+        previewUrl,
       });
     }
 
     if (newAttachments.length === 0) return;
 
     setAttachments((prev) => [...prev, ...newAttachments]);
+    reportClientEvent('files_accepted', {
+      count: newAttachments.length,
+      pending_count: attachments.length + newAttachments.length,
+    });
   };
 
   const removeAttachment = (id: string) => {
     setAttachments((prev) => {
-      const item = prev.find((a) => a.id === id);
-      if (item) revokePreviewUrl(item.previewUrl);
+      const attachment = prev.find((a) => a.id === id);
+      if (attachment) {
+        revokePreviewUrl(attachment.previewUrl);
+      }
       return prev.filter((a) => a.id !== id);
     });
     setUploadError(null);
   };
 
-  const clearPendingAttachments = () => {
-    attachments.forEach((a) => revokePreviewUrl(a.previewUrl));
+  const clearPendingAttachments = (revokeUrls = true) => {
+    if (revokeUrls) {
+      attachments.forEach((attachment) => revokePreviewUrl(attachment.previewUrl));
+    }
     setAttachments([]);
   };
 
   const handleClearChat = () => {
-    clearPendingAttachments();
+    revokeAllPreviewUrls();
+    clearPendingAttachments(false);
     clearMessages();
     setUploadError(null);
   };
@@ -105,16 +237,28 @@ function App() {
       subject: selectedSubject || undefined,
       grade_level: selectedGradeLevel,
       images: attachments.map((a) => a.file),
+      attachmentPreviews: attachments.map((a) => ({
+        name: a.file.name,
+        previewUrl: a.previewUrl,
+      })),
     };
 
+    reportClientEvent('submit_start', {
+      image_count: attachments.length,
+      total_image_bytes: attachments.reduce((total, attachment) => total + attachment.file.size, 0),
+      message_chars: message.trim().length,
+    });
     await sendMessage(request);
+    reportClientEvent('submit_complete', {
+      image_count: attachments.length,
+    });
     setMessage('');
-    clearPendingAttachments();
+    clearPendingAttachments(false);
     setUploadError(null);
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
+    <div className="min-h-screen min-h-[100dvh] bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
       <header className="bg-white/10 backdrop-blur-md border-b border-white/20 sticky top-0 z-50">
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -144,7 +288,10 @@ function App() {
               <li>✅ Spiegare concetti scolastici in modo chiaro</li>
               <li>✅ Fornire esempi pratici per illustrare i metodi</li>
               <li>✅ Guidare nel ragionamento passo-passo</li>
-              <li>✅ Analizzare foto dei compiti (max 3 immagini, 5 MB ciascuna)</li>
+              <li>
+                ✅ Analizzare foto dei compiti (max {uploadLimits.max_images} immagini,{' '}
+                {maxImageSizeLabel} ciascuna)
+              </li>
               <li>❌ NON fornire soluzioni complete dei compiti</li>
               <li>❌ Rifiutare richieste fuori contesto scolastico</li>
             </ul>
@@ -152,7 +299,15 @@ function App() {
         </div>
       )}
 
-      <main className="max-w-6xl mx-auto px-4 py-6">
+      {!isOnline && (
+        <div className="bg-amber-500/95 text-slate-950" role="status">
+          <div className="max-w-6xl mx-auto px-4 py-2 text-sm font-medium">
+            Connessione assente. L'app rimane disponibile, ma la chat richiede il backend online.
+          </div>
+        </div>
+      )}
+
+      <main className="max-w-6xl mx-auto px-4 py-4 sm:py-6">
         <div className="grid lg:grid-cols-4 gap-6">
           <aside className="lg:col-span-1 space-y-4">
             <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/20">
@@ -216,7 +371,10 @@ function App() {
 
           <div className="lg:col-span-3">
             <div className="bg-white/10 backdrop-blur-md rounded-2xl border border-white/20 overflow-hidden">
-              <div className="h-[60vh] overflow-y-auto p-4 space-y-4 bg-white">
+              <div
+                ref={chatScrollRef}
+                className="h-[60dvh] min-h-[22rem] max-h-[44rem] overflow-y-auto p-3 sm:p-4 space-y-4 bg-white"
+              >
                 {messages.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-full text-center text-gray-500">
                     <BookOpen className="w-16 h-16 mb-4 opacity-50" />
@@ -235,7 +393,7 @@ function App() {
                       } animate-slide-up`}
                     >
                       <div
-                        className={`max-w-[80%] rounded-2xl px-4 py-3 ${
+                        className={`max-w-[92%] sm:max-w-[80%] rounded-2xl px-4 py-3 ${
                           msg.role === 'user'
                             ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white'
                             : msg.isWarning
@@ -251,24 +409,32 @@ function App() {
                         )}
                         {msg.attachments && msg.attachments.length > 0 && (
                           <div className="flex flex-wrap gap-2 mb-2">
-                            {msg.attachments.map((attachment) => (
-                              <img
-                                key={attachment.previewUrl}
-                                src={attachment.previewUrl}
-                                alt={attachment.name}
-                                className="h-24 w-24 object-cover rounded-lg border border-gray-200"
-                              />
+                            {msg.attachments.map((attachment, index) => (
+                              <div
+                                key={`${attachment.name}-${index}`}
+                                className="flex max-w-full items-center gap-2 rounded-lg border border-white/30 bg-white/15 p-1.5 pr-2.5 text-xs"
+                              >
+                                {attachment.previewUrl ? (
+                                  <img
+                                    src={attachment.previewUrl}
+                                    alt={attachment.name}
+                                    className="h-12 w-12 rounded-md object-cover"
+                                  />
+                                ) : (
+                                  <Paperclip className="h-4 w-4 shrink-0" aria-hidden="true" />
+                                )}
+                                <span className="truncate">{attachment.name}</span>
+                              </div>
                             ))}
                           </div>
                         )}
                         {msg.role === 'assistant' ? (
                           <div className="flex items-end gap-1">
                             {msg.content ? (
-                              msg.isStreaming ? (
-                                <p className="whitespace-pre-wrap">{msg.content}</p>
-                              ) : (
-                                <MarkdownContent content={msg.content} />
-                              )
+                              <MarkdownContent
+                                content={msg.content}
+                                safeMode={msg.renderAsSafeMarkdown && !canRenderFullMarkdown}
+                              />
                             ) : null}
                             {msg.isStreaming && (
                               <span
@@ -292,16 +458,20 @@ function App() {
                 )}
               </div>
 
-              <form onSubmit={handleSubmit} className="border-t border-white/20 p-4 space-y-3">
+              <form onSubmit={handleSubmit} className="border-t border-white/20 p-3 sm:p-4 space-y-3">
                 {attachments.length > 0 && (
                   <div className="flex flex-wrap gap-2">
                     {attachments.map((attachment) => (
-                      <div key={attachment.id} className="relative">
+                      <div
+                        key={attachment.id}
+                        className="relative flex max-w-full items-center gap-2 rounded-lg border border-white/20 bg-white/10 p-1.5 pr-7 text-sm text-white"
+                      >
                         <img
                           src={attachment.previewUrl}
                           alt={attachment.file.name}
-                          className="h-16 w-16 object-cover rounded-lg border border-white/20"
+                          className="h-12 w-12 rounded-md object-cover"
                         />
+                        <span className="max-w-[12rem] truncate">{attachment.file.name}</span>
                         <button
                           type="button"
                           onClick={() => removeAttachment(attachment.id)}
@@ -322,7 +492,7 @@ function App() {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept={ALLOWED_IMAGE_TYPES.join(',')}
+                  accept={uploadLimits.allowed_types.join(',')}
                   multiple
                   className="hidden"
                   onChange={(e) => {
@@ -342,12 +512,12 @@ function App() {
                   }}
                 />
 
-                <div className="flex gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    disabled={isLoading || attachments.length >= MAX_IMAGE_COUNT}
-                    className="p-3 text-gray-400 hover:text-white transition-colors disabled:opacity-50"
+                    disabled={isLoading || attachments.length >= uploadLimits.max_images}
+                    className="shrink-0 p-3 text-gray-400 hover:text-white transition-colors disabled:opacity-50"
                     title="Allega immagine"
                     aria-label="Allega immagine"
                   >
@@ -356,8 +526,8 @@ function App() {
                   <button
                     type="button"
                     onClick={() => cameraInputRef.current?.click()}
-                    disabled={isLoading || attachments.length >= MAX_IMAGE_COUNT}
-                    className="p-3 text-gray-400 hover:text-white transition-colors disabled:opacity-50"
+                    disabled={isLoading || attachments.length >= uploadLimits.max_images}
+                    className="shrink-0 p-3 text-gray-400 hover:text-white transition-colors disabled:opacity-50"
                     title="Scatta foto"
                     aria-label="Scatta foto"
                   >
@@ -368,13 +538,13 @@ function App() {
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
                     placeholder="Chiedi spiegazioni o allega una foto..."
-                    className="flex-1 bg-white border border-gray-300 rounded-xl px-4 py-3 text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all"
+                    className="min-w-0 flex-[1_1_14rem] bg-white border border-gray-300 rounded-xl px-4 py-3 text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all"
                     disabled={isLoading}
                   />
                   <button
                     type="button"
                     onClick={handleClearChat}
-                    className="p-3 text-gray-400 hover:text-white transition-colors"
+                    className="shrink-0 p-3 text-gray-400 hover:text-white transition-colors"
                     title="Pulisci chat"
                   >
                     <Trash2 className="w-5 h-5" />
@@ -383,7 +553,7 @@ function App() {
                     type="submit"
                     disabled={!canSend}
                     aria-label="Invia"
-                    className="p-3 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl text-white disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90 transition-all"
+                    className="shrink-0 p-3 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl text-white disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90 transition-all"
                   >
                     <Send className="w-5 h-5" />
                   </button>

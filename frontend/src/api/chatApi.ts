@@ -1,5 +1,6 @@
 import axios from 'axios';
-import type { ChatRequest, ChatResponse, ChatStreamEvent } from '../types/chat';
+import type { ChatRequest, ChatResponse, ChatStreamEvent, ServiceInfo } from '../types/chat';
+import { reportClientEvent } from '../utils/clientDebug';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -17,6 +18,9 @@ function buildChatFormData(request: ChatRequest): FormData {
   }
   if (request.grade_level) {
     formData.append('grade_level', request.grade_level);
+  }
+  if (request.history && request.history.length > 0) {
+    formData.append('history', JSON.stringify(request.history));
   }
 
   for (const image of request.images ?? []) {
@@ -85,9 +89,35 @@ export const chatApi = {
 
   /** @deprecated Use sendMessageStream for live token updates. */
   async sendMessage(request: ChatRequest): Promise<ChatResponse> {
-    const formData = buildChatFormData(request);
-    const response = await apiClient.post<ChatResponse>('/chat', formData);
-    return response.data;
+    const startedAt = Date.now();
+    reportClientEvent('api_chat_post_start', {
+      image_count: request.images?.length ?? 0,
+      total_image_bytes: (request.images ?? []).reduce((total, file) => total + file.size, 0),
+    });
+
+    const response = await fetch(`${API_BASE_URL}/chat`, {
+      method: 'POST',
+      body: buildChatFormData(request),
+    });
+
+    reportClientEvent('api_chat_post_response', {
+      ok: response.ok,
+      status: response.status,
+      elapsed_ms: Date.now() - startedAt,
+    });
+
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(detail || `HTTP ${response.status}`);
+    }
+
+    const data = await response.json() as ChatResponse;
+    reportClientEvent('api_chat_json_parsed', {
+      elapsed_ms: Date.now() - startedAt,
+      response_chars: data.response.length,
+      safety_violation: data.safety_violation ?? false,
+    });
+    return data;
   },
 
   async getHealth(): Promise<{ status: string; service: string }> {
@@ -95,17 +125,7 @@ export const chatApi = {
     return response.data;
   },
 
-  async getInfo(): Promise<{
-    name: string;
-    version: string;
-    description: string;
-    guardrails: string[];
-    uploads?: {
-      max_images: number;
-      max_bytes_per_image: number;
-      allowed_types: string[];
-    };
-  }> {
+  async getInfo(): Promise<ServiceInfo> {
     const response = await apiClient.get('/info');
     return response.data;
   },

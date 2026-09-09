@@ -5,7 +5,9 @@ import { chatApi } from '../src/api/chatApi';
 
 vi.mock('../src/api/chatApi', () => ({
   chatApi: {
+    sendMessage: vi.fn(),
     sendMessageStream: vi.fn(),
+    getInfo: vi.fn(),
   },
 }));
 
@@ -16,11 +18,21 @@ function mockStreamResponse(response: string, isHelpful = true): void {
     onEvent({ type: 'token', content: response });
     onEvent({ type: 'done', is_helpful: isHelpful });
   });
+  mockedChatApi.sendMessage.mockResolvedValue({
+    response,
+    is_helpful: isHelpful,
+  });
 }
 
 describe('App', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockedChatApi.getInfo.mockResolvedValue({
+      name: 'Study Helper Chatbot',
+      version: '1.0.0',
+      description: 'Test service',
+      guardrails: [],
+    });
   });
 
   it('renders the app header', () => {
@@ -150,7 +162,7 @@ describe('App', () => {
   });
 
   it('enables send with image attachment only', async () => {
-    mockStreamResponse('Help with your homework photo');
+    mockStreamResponse('### Foto\n\n- Punto con **grassetto** e formula $a^2 + b^2 = c^2$.');
 
     render(<App />);
 
@@ -164,17 +176,101 @@ describe('App', () => {
     await waitFor(() => {
       expect(sendButton).not.toBeDisabled();
     });
+    expect(URL.createObjectURL).toHaveBeenCalledWith(file);
+    expect(screen.getByAltText('homework.jpg')).toBeInTheDocument();
 
     await fireEvent.click(sendButton);
 
     await waitFor(() => {
-      expect(mockedChatApi.sendMessageStream).toHaveBeenCalledWith(
+      expect(mockedChatApi.sendMessage).toHaveBeenCalledWith(
         expect.objectContaining({
           message: '',
           images: expect.arrayContaining([expect.any(File)]),
         }),
-        expect.any(Function),
       );
+    });
+    expect(mockedChatApi.sendMessageStream).not.toHaveBeenCalled();
+    expect(await screen.findByRole('heading', { level: 3 })).toHaveTextContent('Foto');
+    expect(screen.getByText('grassetto').tagName).toBe('STRONG');
+    expect(document.querySelector('.katex')).toBeInTheDocument();
+  });
+
+  it('sends an image when crypto.randomUUID is unavailable', async () => {
+    mockStreamResponse('Help with your homework photo');
+    const originalCrypto = globalThis.crypto;
+
+    Object.defineProperty(globalThis, 'crypto', {
+      configurable: true,
+      value: {
+        getRandomValues: vi.fn((array: Uint8Array) => {
+          array.fill(7);
+          return array;
+        }),
+      },
+    });
+
+    try {
+      render(<App />);
+
+      const fileInput = document.querySelector('input[type="file"]:not([capture])') as HTMLInputElement;
+      const file = new File(['photo'], 'homework.jpg', { type: 'image/jpeg' });
+      await fireEvent.change(fileInput, { target: { files: [file] } });
+      await fireEvent.click(screen.getByRole('button', { name: /invia/i }));
+
+      await waitFor(() => {
+        expect(mockedChatApi.sendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            message: '',
+            images: expect.arrayContaining([file]),
+          }),
+        );
+      });
+    } finally {
+      Object.defineProperty(globalThis, 'crypto', {
+        configurable: true,
+        value: originalCrypto,
+      });
+    }
+  });
+
+  it('uses upload limits from service info', async () => {
+    mockedChatApi.getInfo.mockResolvedValue({
+      name: 'Study Helper Chatbot',
+      version: '1.0.0',
+      description: 'Test service',
+      guardrails: [],
+      uploads: {
+        max_images: 1,
+        max_bytes_per_image: 2 * 1024 * 1024,
+        allowed_types: ['image/png'],
+      },
+    });
+
+    render(<App />);
+    await fireEvent.click(screen.getByLabelText('Informazioni'));
+
+    await waitFor(() => {
+      expect(screen.getByText(/max 1 immagini, 2 MB ciascuna/i)).toBeInTheDocument();
+    });
+
+    const fileInput = document.querySelector('input[type="file"]:not([capture])') as HTMLInputElement;
+    const jpeg = new File(['photo'], 'homework.jpg', { type: 'image/jpeg' });
+    await fireEvent.change(fileInput, { target: { files: [jpeg] } });
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Formato non supportato');
+  });
+
+  it('falls back to default upload limits when service info fails', async () => {
+    mockedChatApi.getInfo.mockRejectedValue(new Error('Info unavailable'));
+
+    render(<App />);
+
+    const fileInput = document.querySelector('input[type="file"]:not([capture])') as HTMLInputElement;
+    const file = new File(['photo'], 'homework.jpg', { type: 'image/jpeg' });
+    await fireEvent.change(fileInput, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Rimuovi homework.jpg')).toBeInTheDocument();
     });
   });
 
@@ -194,6 +290,34 @@ describe('App', () => {
     });
   });
 
+  it('renders markdown while streaming before the response completes', async () => {
+    let resolveDone: (() => void) | undefined;
+    mockedChatApi.sendMessageStream.mockImplementation(async (_request, onEvent) => {
+      onEvent({ type: 'token', content: '### Tit' });
+      await new Promise<void>((resolve) => {
+        resolveDone = resolve;
+      });
+      onEvent({ type: 'token', content: 'olo' });
+      onEvent({ type: 'done', is_helpful: true });
+    });
+
+    render(<App />);
+
+    const input = screen.getByPlaceholderText('Chiedi spiegazioni o allega una foto...');
+    await fireEvent.change(input, { target: { value: 'Test question' } });
+    await fireEvent.click(screen.getByRole('button', { name: /invia/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { level: 3 })).toHaveTextContent('Tit');
+    });
+
+    resolveDone?.();
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { level: 3 })).toHaveTextContent('Titolo');
+    });
+  });
+
   it('removes attachment preview and disables send again', async () => {
     render(<App />);
 
@@ -205,5 +329,6 @@ describe('App', () => {
     await fireEvent.click(removeButton);
 
     expect(screen.getByRole('button', { name: /invia/i })).toBeDisabled();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:mock-preview-url');
   });
 });

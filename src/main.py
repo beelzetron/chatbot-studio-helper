@@ -5,17 +5,21 @@ Guardrail implementati per prevenire utilizzi impropri.
 """
 
 import json
+import logging
 import os
 import re
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Optional
+from typing import Any, AsyncIterator, Literal, Optional
 
 import httpx
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from src.attachments import ProcessedImage, validate_and_process_images
+from src import attachments
+from src.attachments import validate_and_process_images
+
+logger = logging.getLogger("study-helper")
 
 
 def _compile_all(patterns: list[str]) -> list[re.Pattern]:
@@ -59,7 +63,7 @@ app = FastAPI(
 )
 
 # Configuration
-LLM_ENDPOINT = os.getenv("LLM_ENDPOINT", "http://192.168.11.36:8000/v1")
+LLM_ENDPOINT = os.getenv("LLM_ENDPOINT", "http://localhost:8000/v1")
 LLM_MODEL = os.getenv("LLM_MODEL", "local-model")
 LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "60"))
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
@@ -73,7 +77,12 @@ JUDGE_LLM_TIMEOUT = float(os.getenv("JUDGE_LLM_TIMEOUT", "10"))
 JUDGE_LLM_API_KEY = os.getenv("JUDGE_LLM_API_KEY", "")
 JUDGE_ENABLED = bool(JUDGE_LLM_ENDPOINT.strip())
 
+AUTO_MODEL_PLACEHOLDERS = {"", "local-model"}
+_AUTO_MODEL_CACHE: dict[str, str] = {}
+
 DEFAULT_IMAGE_MESSAGE = "Aiutami a capire questo esercizio dall'immagine"
+MAX_HISTORY_MESSAGES = 20
+MAX_HISTORY_CONTENT_CHARS = 4000
 
 # Safety guardrails
 SCHOOL_SUBJECTS = [
@@ -167,6 +176,13 @@ NON_SCHOOL_PATTERNS = [
     r"\b(poker|casino|scommesse|gambling|azzardo)\b",
 ]
 
+DIRECT_HOMEWORK_PATTERNS = [
+    r"\b(ecco\s+il\s+compito|testo\s+del\s+compito)\b",
+    r"\b(svolgi|risolvi|completa)\s+(?:tutto\s+)?(?:il\s+)?compito\b",
+    r"\b(?:dammi|dimmi|scrivi|fornisci)\s+(?:solo\s+)?(?:la\s+)?(?:soluzione|risposta|risposte)\b",
+    r"\b(?:soluzione|risposta|risposte)\s+(?:completa|complete|finale|finali)\b",
+]
+
 # Prompt injection attack patterns
 PROMPT_INJECTION_PATTERNS = [
     # Instruction override attempts
@@ -181,7 +197,8 @@ PROMPT_INJECTION_PATTERNS = [
     r"\b(modalità\s+sviluppatore|developer\s+mode|debug\s+mode)\b",
     r"\b(modalità\s+test|test\s+mode|sandbox\s+bypass)\b",
     # Hypothetical scenarios
-    r"\b(immagina\s+che|pretend\s+that|suppose\s+that)\b",
+    r"\b(immagina\s+che).*\b(soluzione|risposta\s+completa|regole|limiti|ignora|bypass)\b",
+    r"\b(pretend\s+that|suppose\s+that).*\b(solution|answer|rules|for\s+research|ignore|bypass)\b",
     r"\b(esercizio\s+di\s+sicurezza|security\s+exercise|research\s+purpose)\b",
     r"\b(solo\s+per\s+finzione|just\s+for\s+fun|hypothetically)\b",
     # Game/Roleplay bypass
@@ -227,6 +244,29 @@ EDUCATIONAL_KEYWORDS = [
 
 _PROMPT_INJECTION_RES = _compile_all(PROMPT_INJECTION_PATTERNS)
 _NON_SCHOOL_RES = _compile_all(NON_SCHOOL_PATTERNS)
+_DIRECT_HOMEWORK_RES = _compile_all(DIRECT_HOMEWORK_PATTERNS)
+
+SCHOOL_CONTEXT_KEYWORDS = [
+    "compito",
+    "domanda",
+    "quiz",
+    "verifica",
+    "interrogazione",
+    "lezione",
+    "studio",
+    "classe",
+    "professore",
+    "maestra",
+    "alunno",
+    "studente",
+    "rispondi",
+    "risposta",
+    "ragionamento",
+    "repubblica",
+    "impero",
+    "romani",
+    "roma",
+]
 
 
 class ChatResponse(BaseModel):
@@ -236,10 +276,70 @@ class ChatResponse(BaseModel):
     violation_reason: Optional[str] = None
 
 
+class ClientDebugEvent(BaseModel):
+    event: str
+    session_id: Optional[str] = None
+    url: Optional[str] = None
+    user_agent: Optional[str] = None
+    timestamp: Optional[str] = None
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class ChatHistoryMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+def _contains_any(text: str, values: list[str]) -> bool:
+    return any(value in text for value in values)
+
+
+def _looks_like_student_answer(message_lower: str) -> bool:
+    numbered_answer = re.search(r"(?:^|\s)\d+\s*[:.)-]\s*\S+", message_lower)
+    multiple_answer_markers = (
+        len(re.findall(r"(?:^|\s)\d+\s*[:.)-]", message_lower)) >= 2
+    )
+    answer_words = re.search(
+        r"\b(secondo\s+me|penso\s+che|perch[eé]|quindi)\b", message_lower
+    )
+
+    return bool(numbered_answer or multiple_answer_markers or answer_words)
+
+
+def _looks_like_question(message_lower: str) -> bool:
+    question_words = re.search(
+        r"\b(come|cosa|che\s+cosa|perch[eé]|quando|dove|quale|quali|chi)\b",
+        message_lower,
+    )
+    return "?" in message_lower or bool(question_words)
+
+
+def _has_school_context(
+    message_lower: str,
+    subject: Optional[str] = None,
+    history: Optional[list[ChatHistoryMessage]] = None,
+) -> bool:
+    all_school_topics = SCHOOL_SUBJECTS + PRIMARY_GRADE_TOPICS + SECONDARY_GRADE_TOPICS
+    if subject and _contains_any(subject.lower(), all_school_topics):
+        return True
+
+    school_terms = all_school_topics + EDUCATIONAL_KEYWORDS + SCHOOL_CONTEXT_KEYWORDS
+    if _contains_any(message_lower, school_terms):
+        return True
+
+    for history_message in (history or [])[-4:]:
+        content_lower = history_message.content.lower()
+        if _contains_any(content_lower, school_terms):
+            return True
+
+    return False
+
+
 def check_school_context(
     message: str,
     subject: Optional[str] = None,
     has_images: bool = False,
+    history: Optional[list[ChatHistoryMessage]] = None,
 ) -> tuple[bool, str]:
     """
     Verifica se la richiesta è in contesto scolastico.
@@ -257,6 +357,13 @@ def check_school_context(
         if pattern.search(message_lower):
             return False, "Richiesta fuori dal contesto scolastico"
 
+    for pattern in _DIRECT_HOMEWORK_RES:
+        if pattern.search(message_lower):
+            return (
+                False,
+                "Per favore, chiedi spiegazioni o esempi invece di chiedere la soluzione",
+            )
+
     # Check if subject is school-related
     if subject:
         subject_lower = subject.lower()
@@ -269,6 +376,9 @@ def check_school_context(
     has_educational_intent = any(
         keyword in message_lower for keyword in EDUCATIONAL_KEYWORDS
     )
+    has_school_context = _has_school_context(message_lower, subject, history)
+    looks_like_student_answer = _looks_like_student_answer(message_lower)
+    looks_like_question = _looks_like_question(message_lower)
 
     if has_images:
         return True, "Valid"
@@ -276,7 +386,13 @@ def check_school_context(
     if not message_lower:
         return False, "Inserisci una domanda o allega un'immagine del compito"
 
-    if not has_educational_intent and len(message) > 50:
+    if (
+        not has_educational_intent
+        and len(message) > 50
+        and not (
+            has_school_context and (looks_like_student_answer or looks_like_question)
+        )
+    ):
         return (
             False,
             "Per favore, chiedi spiegazioni o esempi invece di inviare direttamente il compito",
@@ -343,7 +459,9 @@ concept and show you an example that will help you solve it yourself."
 {grade_context}Respond in Italian unless the student writes in another language."""
 
 
-def build_user_content(user_message: str, images: list[ProcessedImage]) -> str | list:
+def build_user_content(
+    user_message: str, images: list[attachments.ProcessedImage]
+) -> str | list:
     """Build OpenAI-compatible user message content (text or multimodal)."""
     if not images:
         return user_message
@@ -364,17 +482,23 @@ def build_user_content(user_message: str, images: list[ProcessedImage]) -> str |
 def build_llm_payload(
     system_prompt: str,
     user_message: str,
-    images: Optional[list[ProcessedImage]] = None,
+    model_id: str,
+    images: Optional[list[attachments.ProcessedImage]] = None,
+    history: Optional[list[ChatHistoryMessage]] = None,
     *,
     stream: bool = False,
 ) -> dict:
     user_content = build_user_content(user_message, images or [])
+    messages: list[dict[str, object]] = [{"role": "system", "content": system_prompt}]
+    messages.extend(
+        {"role": message.role, "content": message.content}
+        for message in (history or [])
+    )
+    messages.append({"role": "user", "content": user_content})
+
     payload = {
-        "model": LLM_MODEL,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
-        ],
+        "model": model_id,
+        "messages": messages,
         "temperature": 0.7,
         "max_tokens": 1000,
         "chat_template_kwargs": {"enable_thinking": False},
@@ -395,16 +519,111 @@ def sse_event(payload: dict) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
+def _configured_llm_model() -> str:
+    return (LLM_MODEL or "").strip()
+
+
+def _extract_model_ids(models_payload: object) -> list[str]:
+    if not isinstance(models_payload, dict):
+        return []
+
+    models = models_payload.get("data")
+    if not isinstance(models, list):
+        return []
+
+    model_ids: list[str] = []
+    for model in models:
+        if not isinstance(model, dict):
+            continue
+        model_id = model.get("id")
+        if isinstance(model_id, str) and model_id.strip():
+            model_ids.append(model_id.strip())
+    return model_ids
+
+
+def parse_chat_history(history: Optional[str]) -> list[ChatHistoryMessage]:
+    if not history:
+        return []
+
+    try:
+        raw_history = json.loads(history)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=400, detail="Cronologia chat non valida"
+        ) from exc
+
+    if not isinstance(raw_history, list):
+        raise HTTPException(status_code=400, detail="Cronologia chat non valida")
+
+    parsed: list[ChatHistoryMessage] = []
+    for item in raw_history[-MAX_HISTORY_MESSAGES:]:
+        if not isinstance(item, dict):
+            continue
+
+        role = item.get("role")
+        content = item.get("content")
+        if role not in {"user", "assistant"} or not isinstance(content, str):
+            continue
+
+        content = content.strip()
+        if not content:
+            continue
+
+        parsed.append(
+            ChatHistoryMessage(
+                role=role,
+                content=content[:MAX_HISTORY_CONTENT_CHARS],
+            )
+        )
+
+    return parsed
+
+
+async def resolve_llm_model(client: httpx.AsyncClient) -> str:
+    """Return the explicit model or auto-detect the sole model exposed by the LLM server."""
+    configured_model = _configured_llm_model()
+    if configured_model not in AUTO_MODEL_PLACEHOLDERS:
+        return configured_model
+
+    if LLM_ENDPOINT in _AUTO_MODEL_CACHE:
+        return _AUTO_MODEL_CACHE[LLM_ENDPOINT]
+
+    try:
+        response = await client.get(f"{LLM_ENDPOINT}/models")
+        response.raise_for_status()
+        model_ids = _extract_model_ids(response.json())
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Unable to auto-detect LLM model from /models: {str(exc)}",
+        ) from exc
+
+    if len(model_ids) != 1:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Unable to auto-detect LLM model: configure LLM_MODEL when "
+                "the LLM server exposes zero or multiple models"
+            ),
+        )
+
+    _AUTO_MODEL_CACHE[LLM_ENDPOINT] = model_ids[0]
+    return model_ids[0]
+
+
 async def stream_llm(
     system_prompt: str,
     user_message: str,
-    images: Optional[list[ProcessedImage]] = None,
+    images: Optional[list[attachments.ProcessedImage]] = None,
+    history: Optional[list[ChatHistoryMessage]] = None,
 ) -> AsyncIterator[str]:
     """Stream text tokens from the local OpenAI-compatible LLM."""
-    payload = build_llm_payload(system_prompt, user_message, images, stream=True)
-
     try:
         client = get_llm_client()
+        model_id = await resolve_llm_model(client)
+        payload = build_llm_payload(
+            system_prompt, user_message, model_id, images, history, stream=True
+        )
         async with client.stream(
             "POST",
             f"{LLM_ENDPOINT}/chat/completions",
@@ -437,16 +656,24 @@ async def stream_llm(
 async def call_llm(
     system_prompt: str,
     user_message: str,
-    images: Optional[list[ProcessedImage]] = None,
+    images: Optional[list[attachments.ProcessedImage]] = None,
+    history: Optional[list[ChatHistoryMessage]] = None,
 ) -> str:
     """
     Chiamata all'LLM locale via API compatibile OpenAI.
     """
     try:
         client = get_llm_client()
+        model_id = await resolve_llm_model(client)
         response = await client.post(
             f"{LLM_ENDPOINT}/chat/completions",
-            json=build_llm_payload(system_prompt, user_message, images),
+            json=build_llm_payload(
+                system_prompt,
+                user_message,
+                model_id,
+                images,
+                history,
+            ),
         )
         response.raise_for_status()
         data = response.json()
@@ -541,7 +768,8 @@ async def prepare_chat_request(
     message: str,
     subject: Optional[str],
     images: list[UploadFile],
-) -> tuple[str, bool, list[ProcessedImage], tuple[bool, str]]:
+    history: Optional[list[ChatHistoryMessage]] = None,
+) -> tuple[str, bool, list[attachments.ProcessedImage], tuple[bool, str]]:
     processed_images = await validate_and_process_images(images)
     has_images = len(processed_images) > 0
 
@@ -553,7 +781,7 @@ async def prepare_chat_request(
         raise HTTPException(status_code=400, detail="Messaggio o immagine richiesti")
 
     is_valid, reason = check_school_context(
-        user_message, subject, has_images=has_images
+        user_message, subject, has_images=has_images, history=history
     )
     if not is_valid:
         return user_message, has_images, processed_images, (is_valid, reason)
@@ -568,13 +796,15 @@ async def chat(
     message: str = Form(""),
     subject: Optional[str] = Form(None),
     grade_level: Optional[str] = Form(None),
+    history: Optional[str] = Form(None),
     images: list[UploadFile] = File(default=[]),
 ):
     """
     Main chat endpoint with safety guardrails. Accepts multipart form data with optional images.
     """
+    chat_history = parse_chat_history(history)
     user_message, has_images, processed_images, (is_valid, reason) = (
-        await prepare_chat_request(message, subject, images)
+        await prepare_chat_request(message, subject, images, chat_history)
     )
 
     if not is_valid:
@@ -586,7 +816,9 @@ async def chat(
         )
 
     system_prompt = build_system_prompt(grade_level, has_images=has_images)
-    response_text = await call_llm(system_prompt, user_message, processed_images)
+    response_text = await call_llm(
+        system_prompt, user_message, processed_images, chat_history
+    )
 
     return ChatResponse(
         response=response_text,
@@ -599,12 +831,14 @@ async def chat_stream(
     message: str = Form(""),
     subject: Optional[str] = Form(None),
     grade_level: Optional[str] = Form(None),
+    history: Optional[str] = Form(None),
     images: list[UploadFile] = File(default=[]),
 ):
     """Stream chat response tokens via Server-Sent Events."""
     user_message, has_images, processed_images, (is_valid, reason) = (
         await prepare_chat_request(message, subject, images)
     )
+    chat_history = parse_chat_history(history)
 
     async def event_generator() -> AsyncIterator[str]:
         if not is_valid:
@@ -622,7 +856,7 @@ async def chat_stream(
         system_prompt = build_system_prompt(grade_level, has_images=has_images)
         try:
             async for token in stream_llm(
-                system_prompt, user_message, processed_images
+                system_prompt, user_message, processed_images, chat_history
             ):
                 yield sse_event({"type": "token", "content": token})
             yield sse_event({"type": "done", "is_helpful": True})
@@ -651,6 +885,42 @@ async def health_check():
     return {"status": "healthy", "service": "study-helper-chatbot"}
 
 
+@app.post("/debug/client-event")
+async def client_debug_event(request: Request):
+    """Log browser-side breadcrumbs for diagnosing device-specific crashes."""
+    raw_body = await request.body()
+    try:
+        data = json.loads(raw_body.decode("utf-8")) if raw_body else {}
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        data = {"raw": raw_body[:1200].decode("utf-8", errors="replace")}
+
+    logger.warning(
+        "client_debug event=%s session=%s url=%s user_agent=%s details=%s",
+        data.get("event"),
+        data.get("session_id"),
+        data.get("url"),
+        data.get("user_agent"),
+        data.get("details", data),
+    )
+    return {"ok": True}
+
+
+@app.get("/debug/client-event")
+async def client_debug_event_get(
+    event: str = Query(...),
+    session_id: Optional[str] = Query(None),
+    details: Optional[str] = Query(None),
+):
+    """GET-based debug breadcrumb for old browsers where sendBeacon is unreliable."""
+    logger.warning(
+        "client_debug_get event=%s session=%s details=%s",
+        event,
+        session_id,
+        details,
+    )
+    return {"ok": True}
+
+
 @app.get("/info")
 async def info():
     """Service information."""
@@ -671,6 +941,7 @@ async def info():
             "max_bytes_per_image": int(
                 os.getenv("MAX_IMAGE_BYTES", str(5 * 1024 * 1024))
             ),
+            "max_pixels_per_image": attachments.MAX_IMAGE_PIXELS,
             "allowed_types": ["image/jpeg", "image/png", "image/webp"],
         },
     }

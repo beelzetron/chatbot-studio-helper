@@ -15,4 +15,43 @@ describe('MarkdownContent', () => {
     expect(katex).toBeInTheDocument();
     expect(katex?.parentElement?.classList.contains('katex-display')).toBe(true);
   });
+
+  it('renders basic markdown in safe mode without KaTeX', () => {
+    render(
+      <MarkdownContent
+        safeMode
+        content={
+          '### Titolo\n\n- Primo punto con **grassetto**\n- Secondo punto con `codice`\n\n1) Passo con __enfasi__\n2) Passo con *corsivo*\n\nFormula $a^2$'
+        }
+      />,
+    );
+
+    expect(screen.getByRole('heading', { level: 3 })).toHaveTextContent('Titolo');
+    expect(screen.getByText('grassetto').tagName).toBe('STRONG');
+    expect(screen.getByText('enfasi').tagName).toBe('STRONG');
+    expect(screen.getByText('corsivo').tagName).toBe('EM');
+    expect(screen.getAllByRole('listitem')).toHaveLength(4);
+    expect(screen.getByText('codice').tagName).toBe('CODE');
+    expect(screen.getByText(/Formula \$a\^2\$/)).toBeInTheDocument();
+    expect(document.querySelector('.katex')).not.toBeInTheDocument();
+  });
+
+  it('renders markdown tables in safe mode without KaTeX', () => {
+    render(
+      <MarkdownContent
+        safeMode
+        content={
+          '| Passo | Cosa fare | Formula |\n| --- | --- | --- |\n| 1 | Trova **base** | $b$ |\n| 2 | Calcola `area` | $b \\times h$ |'
+        }
+      />,
+    );
+
+    expect(screen.getByRole('table')).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Passo' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Cosa fare' })).toBeInTheDocument();
+    expect(screen.getByText('base').tagName).toBe('STRONG');
+    expect(screen.getByText('area').tagName).toBe('CODE');
+    expect(screen.getByText(/\$b \\times h\$/)).toBeInTheDocument();
+    expect(document.querySelector('.katex')).not.toBeInTheDocument();
+  });
 });

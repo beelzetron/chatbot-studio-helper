@@ -3,7 +3,7 @@
 ## Local Development
 - **Backend**: `pip install -r requirements-dev.txt` then `PYTHONPATH=. uvicorn src.main:app --host 0.0.0.0 --port 8080`
 - **Frontend**: `cd frontend && npm install && npm run dev` (proxy `/api/*` → backend)
-- **Run tests**: `pip install -r requirements-dev.txt` then `PYTHONPATH=. pytest tests/ -v`
+- **Run tests**: Prefer containerized execution with Podman/Docker so local Python dependencies are not required. Example: `podman run --rm -v "$PWD:/app:Z" -w /app python:3.12-slim sh -lc "pip install -r requirements.txt -r requirements-dev.txt && PYTHONPATH=. pytest tests/ -v"` (or the same command with `docker`).
 - **Frontend tests**: `cd frontend && npm ci && npm run test -- --run`
 
 ## Linting & Type‑checking
@@ -17,10 +17,19 @@
 
 ## Formatting
 - Keep lines ≤120 chars; ignore E203/W503
+- Format Python source with Black before committing changes.
 
 ## CI Pipeline
-- All checks (`test-backend`, `test-frontend`, `code-quality`) run **in parallel** in the `test` stage
+- GitHub Actions (`.github/workflows/ci.yml`, `.github/workflows/release.yml`)
+- All checks (`test-backend`, `test-frontend`, `code-quality`, `lint-internal`) run **in parallel** on PRs and pushes to `main`
+- Push to `main` publishes images to GHCR (`latest` + commit SHA) after tests pass
+- Push tag `v*` (e.g. `v1.0.0`) runs tests, publishes semver-tagged images, and creates a GitHub Release
 - Code-quality requires `requirements-dev.txt` - install it locally to match CI
+
+## Container Registry (GHCR)
+- Backend: `ghcr.io/beelzetron/chatbot-studio-helper-backend`
+- Frontend: `ghcr.io/beelzetron/chatbot-studio-helper-frontend`
+- Pin OpenShift deployments to a release tag (e.g. `1.0.0`) for reproducible deploys; use `latest` for main tracking
 
 ## Deployment (OpenShift)
 - Ensure `$OPENSHIFT_TOKEN` and `$OPENSHIFT_SERVER` are set
@@ -34,7 +43,7 @@
 - **Frontend**: `docker build -t study-helper-frontend ./frontend` (or `podman build -t study-helper-frontend ./frontend`)
 
 ## Environment Variables (defaults)
-- `LLM_ENDPOINT` → `http://192.168.11.36:8000/v1`
+- `LLM_ENDPOINT` → `http://localhost:8000/v1`
 - `LLM_MODEL` → `local-model`
 - `LLM_TIMEOUT` → `60`
 - `MAX_IMAGE_COUNT` → `3`

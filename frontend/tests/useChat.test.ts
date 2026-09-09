@@ -6,6 +6,7 @@ import type { ChatStreamEvent } from '../src/types/chat';
 
 vi.mock('../src/api/chatApi', () => ({
   chatApi: {
+    sendMessage: vi.fn(),
     sendMessageStream: vi.fn(),
   },
 }));
@@ -70,6 +71,40 @@ describe('useChat', () => {
 
     await waitFor(() => {
       expect(result.current.messages[1].content).toBe('Hello');
+    });
+  });
+
+  it('sends prior text turns as conversation history', async () => {
+    mockedChatApi.sendMessageStream
+      .mockImplementationOnce(async (_request, onEvent) => {
+        onEvent({ type: 'token', content: 'Quiz question' });
+        onEvent({ type: 'done', is_helpful: true });
+      })
+      .mockImplementationOnce(async (_request, onEvent) => {
+        onEvent({ type: 'token', content: 'Correct' });
+        onEvent({ type: 'done', is_helpful: true });
+      });
+
+    const { result } = renderHook(() => useChat());
+
+    await result.current.sendMessage({ message: 'Fammi un quiz sul Giurassico' });
+
+    await waitFor(() => {
+      expect(result.current.messages[1].content).toBe('Quiz question');
+    });
+
+    await result.current.sendMessage({ message: '1-B, 2-B, 3-A, 4-B, 5-B' });
+
+    await waitFor(() => {
+      expect(mockedChatApi.sendMessageStream).toHaveBeenCalledTimes(2);
+    });
+
+    expect(mockedChatApi.sendMessageStream.mock.calls[1][0]).toMatchObject({
+      message: '1-B, 2-B, 3-A, 4-B, 5-B',
+      history: [
+        { role: 'user', content: 'Fammi un quiz sul Giurassico' },
+        { role: 'assistant', content: 'Quiz question' },
+      ],
     });
   });
 
@@ -143,10 +178,10 @@ describe('useChat', () => {
   });
 
   it('includes attachment previews in user message', async () => {
-    mockStream([
-      { type: 'token', content: 'Ecco una spiegazione' },
-      { type: 'done', is_helpful: true },
-    ]);
+    mockedChatApi.sendMessage.mockResolvedValue({
+      response: 'Ecco una spiegazione',
+      is_helpful: true,
+    });
 
     const file = new File(['img'], 'test.jpg', { type: 'image/jpeg' });
     const { result } = renderHook(() => useChat());
@@ -159,6 +194,11 @@ describe('useChat', () => {
     await waitFor(() => {
       expect(result.current.messages[0].attachments).toHaveLength(1);
       expect(result.current.messages[0].attachments?.[0].name).toBe('test.jpg');
+      expect(result.current.messages[1].renderAsSafeMarkdown).toBe(true);
     });
+    expect(mockedChatApi.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ images: [file] }),
+    );
+    expect(mockedChatApi.sendMessageStream).not.toHaveBeenCalled();
   });
 });
