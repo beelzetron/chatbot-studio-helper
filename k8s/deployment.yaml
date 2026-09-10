@@ -39,7 +39,7 @@ spec:
     spec:
       containers:
       - name: chatbot
-        image: ghcr.io/beelzetron/chatbot-studio-helper-backend:latest
+        image: ghcr.io/beelzetron/chatbot-studio-helper-backend:1.1.0-beta2
         imagePullPolicy: Always
         ports:
         - containerPort: 8080
